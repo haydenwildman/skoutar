@@ -1,6 +1,6 @@
-# Pitching Analytics — Flutter Port
+# SKOUTAR — Flutter Port
 
-A Flutter/Dart recreation of the original R Shiny "Pitching Analytics" app —
+A Flutter/Dart recreation of the original R Shiny pitching analytics app (now branded SKOUTAR) —
 same feature set, same navigation, same color system and statistical
 formulas, rebuilt as a cross-platform app for **Windows, iOS, Android, and
 Web**.
@@ -19,7 +19,7 @@ lib/
     pitch_event.dart            One logged pitch/pickoff row (mirrors the R CSV schema)
   services/
     storage_service.dart        Local JSON persistence (shared_preferences)
-    auth_service.dart           Login/signup/admin user CRUD, salted SHA-256 hashing
+    auth_service.dart           Login/signup (Supabase Auth)
     app_session.dart            App-wide state + live game-input state machine
     stats_service.dart          *All* statistical formulas, ported from the R app
   widgets/
@@ -39,7 +39,6 @@ lib/
     scouting_report_screen.dart Opponent-specific report + key hitters (Plus)
     edit_raw_data_screen.dart   Editable/deletable table of every logged pitch
     edit_at_bats_screen.dart    Pick a ball-in-play row, tap the field to (re)plot it
-    admin_panel_screen.dart     Full user CRUD: create, delete, reset password, change tier/status
 ```
 
 ## 2. Formulas preserved exactly
@@ -78,7 +77,7 @@ prompts, lineup restore from history — is a multi-week engineering
 project, not a single pass. What you have here is a **complete,
 compilable architecture** with:
 
-- ✅ Full auth (login/signup/admin CRUD) and tiered access (Basic/Plus/Admin)
+- ✅ Full auth (login/signup) and tiered access (Basic/Plus)
 - ✅ All statistical formulas ported faithfully (see above)
 - ✅ All 11 feature screens present and functional, wired to real data
 - ✅ Cross-platform persistence (no native DB plugin required)
@@ -112,22 +111,9 @@ flutter run -d chrome        # Web
 flutter run -d windows        # Windows desktop
 ```
 
-**Creating your first admin account:** this app ships with *no* default
-admin account and *no* hardcoded password — that's deliberate, so nobody
-can log in as admin just by reading the source. To create your very
-first admin, run the app once with your own credentials passed in:
-
-```bash
-flutter run --dart-define=SEED_ADMIN_USER=youradminname \
-            --dart-define=SEED_ADMIN_PASS=SomeStrongPassword123
-```
-
-That creates the account in local storage on that run only. For every
-run/build after that, drop those two flags — and never ship a release
-build with them set, since that would bake the password into the
-compiled app. Once you're logged in as that admin, use the in-app Admin
-Panel to create any further admin/basic/plus accounts normally; you
-won't need the bootstrap flags again.
+**Accounts:** users sign up in the app (Supabase Auth). The in-app Admin Panel
+has been removed; any manual account/tier changes are made in the Supabase
+dashboard.
 
 ## 6. Building release binaries
 
@@ -169,8 +155,8 @@ TODO comments on what real implementation goes where:
   same entitlement system.
 - **Either way**, the payment provider notifies **your backend** via
   webhook when a payment succeeds/renews/cancels, and your backend is
-  what flips a user's `tier`/`status` — the same fields
-  `AdminPanelScreen` already lets you edit by hand. Once you have that
+  what flips a user's `tier`/`status` — the same
+  fields you can also edit by hand in the Supabase dashboard. Once you have that
   backend, swap `StorageService`'s user storage for calls to it (see
   §8), and have it push status changes down to the app.
 
@@ -197,3 +183,14 @@ so the app remains fully testable end-to-end. Flip that one line to
 See `pubspec.yaml`. Kept intentionally minimal (no native SQL plugin, no
 platform channels) so that `flutter pub get` + `flutter run` should work
 out of the box on every target platform without extra native setup.
+
+## Pitch Sequencing score (SKOUTAR)
+
+`lib/services/sequence_scoring.dart` scores each plate appearance 0-100 from
+data the app already records (no velocity/movement/location):
+Count management 30 · Batter matchup 25 · Setup & response 20 ·
+Predictability 10 · Result 15 (edit `SeqWeights` / `SeqConfig`). Missing
+components are dropped and the remaining weights re-normalised; the UI shows
+coverage and confidence. The Pitch Sequencing tab explains every score
+("Why this score", At-Bat Review). Weights and thresholds are initial
+product-design values, not validated.

@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import 'skoutar_logo.dart';
 
 class NavItem {
   final IconData icon;
   final String label;
   final bool requiresPlus;
-  final bool requiresAdmin;
-  const NavItem(this.icon, this.label,
-      {this.requiresPlus = false, this.requiresAdmin = false});
+  const NavItem(this.icon, this.label, {this.requiresPlus = false});
 }
 
 /// Static nav structure — 1:1 with the R app's `tab_map` / sidebar links.
@@ -27,14 +26,10 @@ const List<NavItem> mainNavItems = [
   NavItem(Icons.edit_outlined, 'Edit At-Bats'),
 ];
 
-const NavItem adminNavItem =
-    NavItem(Icons.admin_panel_settings_outlined, 'Admin Panel', requiresAdmin: true);
-
 class SidebarNav extends StatelessWidget {
   final String selected;
   final ValueChanged<String> onSelect;
   final bool isPlus;
-  final bool isAdmin;
   final String pitcherName;
   final VoidCallback onLogout;
 
@@ -50,7 +45,6 @@ class SidebarNav extends StatelessWidget {
     required this.selected,
     required this.onSelect,
     required this.isPlus,
-    required this.isAdmin,
     required this.pitcherName,
     required this.onLogout,
     this.collapsed = false,
@@ -76,7 +70,7 @@ class SidebarNav extends StatelessWidget {
               child: collapsed
                   ? Column(
                       children: [
-                        Image.asset('assets/images/logo.png', height: 32, fit: BoxFit.contain, filterQuality: FilterQuality.high),
+                        SkoutarLogo(height: 28),
                         const SizedBox(height: 8),
                         IconButton(
                           icon: const Icon(Icons.logout, color: Colors.white70, size: 18),
@@ -89,18 +83,12 @@ class SidebarNav extends StatelessWidget {
                     )
                   : Row(
                       children: [
-                        Image.asset('assets/images/logo.png', height: 40, fit: BoxFit.contain, filterQuality: FilterQuality.high),
-                        const SizedBox(width: 8),
-                        const Expanded(
-                          child: Text(
-                            'Pitching\nAnalytics',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w900,
-                              fontSize: 14,
-                              height: 1.2,
-                            ),
-                          ),
+                        // The SKOUTAR logo already carries the wordmark, so it
+                        // stands alone (no separate app-name text beside it).
+                        Expanded(
+                          child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: SkoutarLogo(height: 44)),
                         ),
                         IconButton(
                           icon: const Icon(Icons.logout, color: Colors.white70, size: 18),
@@ -199,10 +187,6 @@ class SidebarNav extends StatelessWidget {
                     _sectionLabel('DATA'),
                     _navTile(mainNavItems[8]),
                     _navTile(mainNavItems[9]),
-                    if (isAdmin) ...[
-                      _sectionLabel('ADMIN'),
-                      _navTile(adminNavItem),
-                    ],
                   ],
                 ),
               ),
@@ -235,8 +219,7 @@ class SidebarNav extends StatelessWidget {
   }
 
   Widget _navTile(NavItem item) {
-    final locked =
-        (item.requiresPlus && !isPlus) || (item.requiresAdmin && !isAdmin);
+    final locked = item.requiresPlus && !isPlus;
     final active = selected == item.label;
     final tile = InkWell(
       onTap: locked ? null : () => onSelect(item.label),

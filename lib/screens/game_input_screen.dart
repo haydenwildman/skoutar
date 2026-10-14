@@ -1,12 +1,17 @@
+import '../widgets/orange_glow_button.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/app_session.dart';
 import '../models/pitch_event.dart';
 import '../theme/app_theme.dart';
+import '../widgets/glow.dart';
 import '../utils/responsive.dart';
 import '../widgets/baseball_field_painter.dart';
 import '../services/batter_history_service.dart';
-import '../services/stats_service.dart' show perfHex, statProgressFraction;
+import '../services/stats_service.dart' show statHasScale;
+import '../widgets/tier_scale_bar.dart';
+import '../widgets/stat_hold_info.dart';
+import '../services/color_guides.dart';
 import 'package:intl/intl.dart';
 
 /// The main content area walks through one step at a time instead of
@@ -140,16 +145,8 @@ class _GameInputScreenState extends State<GameInputScreen> {
   // ── Result/BIP/event button icons + colors. Pitch-type and BIP colors
   // are pulled live from AppColors (the Spray Chart's own palette) so they
   // can never drift out of sync; call/event buttons use their own separate
-  // semantic color system, distinct from the pitch-type palette. Icons are
-  // professional outline glyphs, not emoji, per the redesign spec. ──
-  static const Map<String, IconData> callIcons = {
-    'b': Icons.circle_outlined,
-    'sl': Icons.gpp_good_outlined,
-    'ss': Icons.air,
-    'f': Icons.call_made,
-    'ip': Icons.sports_baseball_outlined,
-    'hbp': Icons.personal_injury_outlined,
-  };
+  // semantic color system, distinct from the pitch-type palette. Buttons
+  // are text-only (no icons or emoji). ──
   static const Map<String, Color> callColor = {
     'b': AppColors.dataBlue,
     'sl': AppColors.perfExcellent,
@@ -157,24 +154,6 @@ class _GameInputScreenState extends State<GameInputScreen> {
     'f': AppColors.perfAverage,
     'ip': AppColors.dataNavy,
     'hbp': AppColors.perfPoor,
-  };
-  static const Map<String, IconData> bipIcons = {
-    '1b': Icons.looks_one_outlined,
-    '2b': Icons.looks_two_outlined,
-    '3b': Icons.looks_3_outlined,
-    'hr': Icons.rocket_launch_outlined,
-    'go': Icons.south,
-    'fo': Icons.north,
-    'lo': Icons.east,
-    'fc': Icons.shuffle,
-    'dp': Icons.bolt_outlined,
-    'e': Icons.close,
-  };
-  static const Map<String, IconData> eventIcons = {
-    'po': Icons.lock_outline,
-    'to': Icons.directions_run,
-    'txo': Icons.sports_handball_outlined,
-    'bk': Icons.warning_amber_outlined,
   };
   static const Map<String, String> eventActionLabels = {
     'po': 'Pickoff',
@@ -259,7 +238,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            ElevatedButton(
+            OrangeGlowButton(
               onPressed: () {
                 if (_opponentCtrl.text.trim().isEmpty) return;
                 Navigator.pop(ctx, true);
@@ -608,7 +587,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-            ElevatedButton(onPressed: submit, child: const Text('Add')),
+            OrangeGlowButton(onPressed: submit, child: const Text('Add')),
           ],
         );
       }),
@@ -654,7 +633,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-            ElevatedButton(
+            OrangeGlowButton(
               onPressed: () async {
                 await session.setCustomPitchTypeColor(key, chosen);
                 if (mounted) Navigator.pop(ctx);
@@ -902,13 +881,14 @@ class _GameInputScreenState extends State<GameInputScreen> {
   /// instead of a tinted card + color accent bar) so the two button
   /// families are never mistaken for each other.
   Widget _resultTile({
-    required IconData icon,
+    IconData? icon,
     required String label,
     required Color color,
     required VoidCallback? onTap,
     String? tooltip,
     String? subtitle,
     bool tinted = false,
+    bool filled = false,
   }) {
     final btn = InkWell(
       onTap: onTap,
@@ -917,22 +897,28 @@ class _GameInputScreenState extends State<GameInputScreen> {
         width: _tileWidth(230, phoneColumns: 2),
         constraints: const BoxConstraints(minHeight: 60),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: tinted ? color.withOpacity(0.08) : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: tinted ? color : AppColors.colBorder, width: tinted ? 2 : 1.5),
-        ),
+        // `filled` = the orange family: orange border, faded center, soft glow
+        // (same look as the pitch-type buttons, in orange).
+        decoration: filled
+            ? orangeGlowDecoration()
+            : BoxDecoration(
+                color: tinted ? color.withOpacity(0.08) : Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: tinted ? color : AppColors.colBorder, width: tinted ? 2 : 1.5),
+              ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Container(
-              width: 36,
-              height: 36,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(color: color.withOpacity(0.15), shape: BoxShape.circle),
-              child: Icon(icon, size: 18, color: color),
-            ),
-            const SizedBox(width: 10),
+            if (icon != null) ...[
+              Container(
+                width: 36,
+                height: 36,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(color: color.withOpacity(0.15), shape: BoxShape.circle),
+                child: Icon(icon, size: 18, color: color),
+              ),
+              const SizedBox(width: 10),
+            ],
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -940,14 +926,18 @@ class _GameInputScreenState extends State<GameInputScreen> {
                 children: [
                   Text(label,
                       textAlign: TextAlign.left,
-                      style: const TextStyle(
-                          fontSize: 14, fontWeight: FontWeight.w800, color: AppColors.colText)),
+                      style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.colText)),
                   if (subtitle != null) ...[
                     const SizedBox(height: 2),
                     Text(subtitle,
                         textAlign: TextAlign.left,
-                        style: const TextStyle(
-                            fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.colMuted)),
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.colMuted)),
                   ],
                 ],
               ),
@@ -967,16 +957,21 @@ class _GameInputScreenState extends State<GameInputScreen> {
     required AppSession session,
   }) {
     final color = AppColors.sprayColor(outcome);
-    final icon = bipIcons[outcome] ?? Icons.sports_baseball_outlined;
     final label = bipFullNames[outcome] ?? outcome.toUpperCase();
     final (game, total) = _bipCounts(session, outcome);
-    return _resultTile(
-      icon: icon,
-      label: label,
-      color: color,
-      onTap: onTap,
-      subtitle: 'Game: $game • Total: $total',
-      tinted: true,
+    return StatHoldInfo(
+      title: label,
+      description: composeHoldInfo(
+        what: 'Logs the result of the ball in play. The line under the name shows how many of this result this game and in total.',
+        colorGuide: 'The tile color is this result\'s color on the Spray Chart (a label, not a good/bad grade):\n${sprayFillColorGuide()}',
+      ),
+      child: _resultTile(
+        label: label,
+        color: color,
+        onTap: onTap,
+        subtitle: 'Game: $game • Total: $total',
+        tinted: true,
+      ),
     );
   }
 
@@ -990,9 +985,9 @@ class _GameInputScreenState extends State<GameInputScreen> {
   }) {
     final (game, total) = _eventCounts(session, eventCode);
     return _resultTile(
-      icon: eventIcons[eventCode] ?? Icons.list_alt_outlined,
       label: eventActionLabels[eventCode] ?? eventCode.toUpperCase(),
-      color: AppColors.dataNavy,
+      color: AppColors.brandOrangeDeep,
+      filled: true,
       onTap: onTap,
       tooltip: tooltip,
       subtitle: 'Game: $game • Total: $total',
@@ -1000,7 +995,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
   }
 
   Widget _stageCard({required String title, VoidCallback? onBack, required Widget child}) {
-    return Card(
+    return GlowCard(
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 300),
         child: Padding(
@@ -1170,7 +1165,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
         const SizedBox(height: 8),
 
         // ── 1. Game header: team/game info + Edit / New Game ──────
-        Card(
+        GlowCard(
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: gameConfirmed
@@ -1236,7 +1231,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
         // ── 3. Main content area — one stage at a time ─────────────
         _buildMainContent(session),
 
-        // ── 4. Batter History — Team + Jersey #, persists across games ──
+        // ── 4. Batter History — this game's Team + Jersey # ──
         if (gameConfirmed && session.committedJersey != null) ...[
           const SizedBox(height: 14),
           _buildBatterHistorySection(session),
@@ -1329,7 +1324,16 @@ class _GameInputScreenState extends State<GameInputScreen> {
                 ),
               ),
             ),
-            Row(
+            StatHoldInfo(
+              title: 'Outs',
+              description: composeHoldInfo(
+                what: 'Outs in the current inning. Use the arrows next to the dots to change it.',
+                colorGuide: [
+                  swatchLine(AppColors.perfAverage, 'Yellow dot: an out already recorded.'),
+                  'Empty (outlined) dot: an out still available. Three filled dots end the inning. These are status markers, not graded, so there are no cutoffs.',
+                ].join('\n'),
+              ),
+              child: Row(
               children: List.generate(3, (i) {
                 final filled = i < session.outs;
                 return Container(
@@ -1343,6 +1347,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
                   ),
                 );
               }),
+            ),
             ),
             Tooltip(
               message: 'Increase outs',
@@ -1470,7 +1475,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
           const Text(
             'The batting order advances on its own — just type the jersey #. '
             'Enter 1 to start the lineup over; 10 and up keep counting.',
-            style: TextStyle(fontSize: 11.5, color: AppColors.colMuted),
+            style: TextStyle(fontSize: 11.5, color: AppColors.colMuted, fontStyle: FontStyle.italic),
           ),
           const SizedBox(height: 16),
           const Text('Bats',
@@ -1737,9 +1742,11 @@ class _GameInputScreenState extends State<GameInputScreen> {
               final label = c[0];
               final code = c[1];
               return _resultTile(
-                icon: callIcons[code] ?? Icons.sports_baseball_outlined,
                 label: label,
-                color: callColor[code] ?? AppColors.dataBlue,
+                // Ball/Strike call section: same filled orange as the other
+                // Game Input buttons/events.
+                color: AppColors.brandOrangeDeep,
+                filled: true,
                 tooltip: callTooltips[code],
                 onTap: () {
                   if (code == 'ip') {
@@ -1933,7 +1940,25 @@ class _GameInputScreenState extends State<GameInputScreen> {
   /// The single most recent pitch — large and unmistakably the primary
   /// item on the History screen (spec: "who was hitting, what was the
   /// situation, what did I throw, what happened, where was it hit").
-  Widget _mostRecentPitchCard(AppSession session, PitchEvent p, (String, String)? countPair) {
+  Widget _mostRecentPitchCard(AppSession session, PitchEvent p, (String, String)? countPair) =>
+      StatHoldInfo(
+        title: 'Most recent pitch',
+        description: composeHoldInfo(
+          what: 'The latest pitch or event logged in this at-bat, with its result.',
+          colorGuide: _eventColorGuide(p),
+        ),
+        child: _mostRecentPitchCardBox(session, p, countPair),
+      );
+
+  /// Color guide for a logged pitch/event: pitch-type color, or the neutral
+  /// color used for non-pitch events.
+  String _eventColorGuide(PitchEvent p) {
+    if (p.eventType == 'pitch') return pitchTypeColorGuide([p.pitchType ?? 'other']);
+    return swatchLine(AppColors.dataNavy,
+        'Navy/gray: a non-pitch event (pickoff, caught stealing, throw out, balk). It is a label color, not a good/bad grade.');
+  }
+
+  Widget _mostRecentPitchCardBox(AppSession session, PitchEvent p, (String, String)? countPair) {
     final isPitch = p.eventType == 'pitch';
     final color = isPitch ? AppColors.pitchColor(p.pitchType) : AppColors.dataNavy;
     final resultLabel = isPitch
@@ -2019,7 +2044,16 @@ class _GameInputScreenState extends State<GameInputScreen> {
   /// A previous pitch shown as a single dense, scannable sequence line —
   /// e.g. "#27 — Fastball — Ball — 0-0" — so the whole at-bat's shape is
   /// easy to read at a glance underneath the prominent last pitch.
-  Widget _historySequenceRow(PitchEvent p, (String, String)? countPair) {
+  Widget _historySequenceRow(PitchEvent p, (String, String)? countPair) => StatHoldInfo(
+        title: 'Pitch in this at-bat',
+        description: composeHoldInfo(
+          what: 'One earlier pitch or event from this at-bat, shown as: batter number, pitch, result, batted-ball type and count.',
+          colorGuide: _eventColorGuide(p),
+        ),
+        child: _historySequenceRowBox(p, countPair),
+      );
+
+  Widget _historySequenceRowBox(PitchEvent p, (String, String)? countPair) {
     final isPitch = p.eventType == 'pitch';
     final color = isPitch ? AppColors.pitchColor(p.pitchType) : AppColors.colMuted;
     final resultLabel = isPitch
@@ -2048,7 +2082,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
                 overflow: TextOverflow.ellipsis),
           ),
           if (p.inning != null)
-            Text('Inn ${p.inning}', style: const TextStyle(fontSize: 10.5, color: AppColors.colMuted)),
+            Text('Inn ${p.inning}', style: const TextStyle(fontSize: 10.5, color: AppColors.colMuted, fontStyle: FontStyle.italic)),
         ],
       ),
     );
@@ -2105,10 +2139,12 @@ class _GameInputScreenState extends State<GameInputScreen> {
       allPitches: session.pitches,
       team: team,
       jersey: jersey,
+      gameNumber: session.currentGameNumber,
+      season: session.currentSeason,
     );
     final batterName = session.batterNames[jersey];
 
-    return Card(
+    return GlowCard(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
         child: Column(
@@ -2124,7 +2160,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
                       textAlign: TextAlign.right,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 11, color: AppColors.colMuted)),
+                      style: const TextStyle(fontSize: 11, color: AppColors.colMuted, fontStyle: FontStyle.italic)),
                 ),
               ],
             ),
@@ -2153,6 +2189,13 @@ class _GameInputScreenState extends State<GameInputScreen> {
                     text: 'Batting ${_ordinal(session.battingOrderSlot)}',
                     style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.colMuted),
                   ),
+                  const TextSpan(text: '   |   ', style: TextStyle(color: AppColors.colBorder, fontWeight: FontWeight.w900)),
+                  TextSpan(
+                    text: history.timesFaced == 0
+                        ? '1st PA this game'
+                        : 'PA ${history.currentPlateAppearance} · faced ${history.timesFaced}x',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: AppColors.brandOrangeDeep),
+                  ),
                 ],
               ),
               overflow: TextOverflow.ellipsis,
@@ -2160,8 +2203,8 @@ class _GameInputScreenState extends State<GameInputScreen> {
             if (!history.hasData) ...[
               const SizedBox(height: 10),
               const Text(
-                'No previous at-bats logged against this batter yet. '
-                'History will build up as you face them again — this game or in future games against the same team.',
+                'First plate appearance of this game — not faced yet. '
+                'Their history shows up here the next time they come to the plate.',
                 style: TextStyle(fontSize: 12, color: AppColors.colMuted),
               ),
             ] else ...[
@@ -2296,7 +2339,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
             const Text('PREVIOUS SEQUENCES',
                 style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: AppColors.colMuted, letterSpacing: 1)),
             const SizedBox(height: 4),
-            Text('${history.atBats.length}',
+            Text('${history.previousSequences.length}',
                 style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: AppColors.ink)),
             const Text('at-bats · tap to view',
                 style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: AppColors.colMuted)),
@@ -2351,16 +2394,42 @@ class _GameInputScreenState extends State<GameInputScreen> {
     });
   }
 
-  /// One small stat cell: label, value, and a thin color-graded fill bar
-  /// underneath (green→yellow→red, direction per [statKey] via perfHex/
-  /// statProgressFraction). Plain counts (no [statKey]) render a neutral
-  /// bar instead of a graded one. A null [rawValue] shows "N/A" with the
-  /// bar left empty rather than filled as if the value were zero.
+  /// One small stat cell: label, value, and a thin tier-colored scale with a
+  /// marker at the value ([TierScaleBar], compact) - green end on the left for
+  /// lower-is-better stats, on the right for higher-is-better ones. Plain
+  /// counts (no [statKey]) render a neutral bar instead. A null [rawValue]
+  /// shows "N/A" with a faded scale and no marker.
   Widget _miniStatCell(String label, String display, double? rawValue, String? statKey) {
     final hasValue = display != 'N/A';
-    final graded = statKey != null && rawValue != null;
-    final barColor = graded ? perfHex(statKey, rawValue) : AppColors.brandOrangeDeep.withOpacity(0.35);
-    final frac = graded ? statProgressFraction(statKey, rawValue) : 0.0;
+    final scaled = statHasScale(statKey);
+    const meanings = <String, String>{
+      'AVG': 'Batting average: hits ÷ at-bats.',
+      'OBP': 'On-base percentage: how often the batter reaches base (hits + walks + hit-by-pitches ÷ plate appearances).',
+      'SLG': 'Slugging percentage: total bases ÷ at-bats, so extra-base hits count for more.',
+      'OPS': 'On-base plus slugging (OBP + SLG): a single number for overall offense.',
+      'BB%': 'Walk percentage: walks ÷ plate appearances.',
+      'K%': 'Strikeout percentage: strikeouts ÷ plate appearances.',
+      'BABIP': 'Batting average on balls in play: hits on balls put in play (not counting home runs and strikeouts).',
+      'AB': 'At-bats this batter has against you.',
+    };
+    final guide = scaled
+        ? statColorGuide(statKey!,
+            bar: true,
+            note: 'Graded from the PITCHER\'s point of view: a high AVG, OBP, SLG, OPS, BB% or BABIP is red (bad for you), and a high K% is green (good for you).')
+        : swatchLine(AppColors.brandOrangeDeep,
+            'Orange bar: a plain count. It is not a good/bad grade, so there are no cutoffs.');
+    return StatHoldInfo(
+      title: label,
+      description: composeHoldInfo(
+        what: '${meanings[label] ?? label}${hasValue ? '\nThis batter: $display.' : '\nNo data yet (N/A).'}',
+        colorGuide: guide,
+      ),
+      child: _miniStatCellBox(label, display, rawValue, statKey, hasValue, scaled),
+    );
+  }
+
+  Widget _miniStatCellBox(
+      String label, String display, double? rawValue, String? statKey, bool hasValue, bool scaled) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
@@ -2388,19 +2457,18 @@ class _GameInputScreenState extends State<GameInputScreen> {
                     color: hasValue ? AppColors.colText : AppColors.colMuted)),
           ),
           const SizedBox(height: 4),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(3),
-            child: SizedBox(
-              height: 4,
-              child: Stack(children: [
-                Container(color: AppColors.colBorder),
-                FractionallySizedBox(
-                  widthFactor: graded ? frac.clamp(0.0, 1.0) : (hasValue ? 1.0 : 0.0),
-                  child: Container(color: barColor),
+          if (scaled)
+            TierScaleBar(statKey: statKey!, rawValue: rawValue, valueText: display, compact: true)
+          else
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: SizedBox(
+                height: 4,
+                child: Container(
+                  color: hasValue ? AppColors.brandOrangeDeep.withOpacity(0.35) : AppColors.colBorder,
                 ),
-              ]),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -2443,7 +2511,13 @@ class _GameInputScreenState extends State<GameInputScreen> {
           borderRadius: BorderRadius.circular(6),
           border: Border.all(color: AppColors.colBorder),
         ),
-        child: Text.rich(
+        child: StatHoldInfo(
+          title: 'Previous sequence pitch',
+          description: composeHoldInfo(
+            what: 'One pitch from an earlier plate appearance against this batter: its order, pitch type and result.',
+            colorGuide: pitchTypeColorGuide([p.pitchType ?? 'other']),
+          ),
+          child: Text.rich(
           TextSpan(children: [
             TextSpan(
                 text: '${i + 1}  ',
@@ -2456,6 +2530,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
                 style: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.ink)),
           ]),
           style: const TextStyle(fontSize: 11.5),
+        ),
         ),
       );
     }
@@ -2525,8 +2600,22 @@ class _GameInputScreenState extends State<GameInputScreen> {
     if (!t.hasData) {
       return const Text('Not enough data yet.', style: TextStyle(fontSize: 12, color: AppColors.colMuted));
     }
-    final usageEntries = t.pitchUsageCounts.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
+
+    // Whole-percent display ("32%") and baseball-style BAA (".250");
+    // "N/A" when there isn't a denominator yet.
+    String pct(double? v) => v == null ? 'N/A' : '${v.round()}%';
+
+    Widget pitchStat(String label, String value) => RichText(
+          text: TextSpan(
+            children: [
+              TextSpan(text: '$label ', style: const TextStyle(fontSize: 10.5, color: AppColors.colMuted, fontStyle: FontStyle.italic)),
+              TextSpan(
+                  text: value,
+                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900, color: AppColors.ink)),
+            ],
+          ),
+        );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2538,34 +2627,28 @@ class _GameInputScreenState extends State<GameInputScreen> {
           _tendencyStat('Fouls', '${t.foulBalls}'),
           _tendencyStat('BIP', '${t.ballsInPlay}'),
         ]),
-        if (usageEntries.isNotEmpty) ...[
-          const SizedBox(height: 6),
-          Text.rich(
-            TextSpan(
-              children: [
-                for (var i = 0; i < usageEntries.length; i++) ...[
-                  if (i > 0) const TextSpan(text: '   ·   ', style: TextStyle(color: AppColors.colBorder)),
-                  TextSpan(
-                    text: '${_pitchTypeLabel(usageEntries[i].key)} ${(usageEntries[i].value / t.totalPitches * 100).round()}%',
-                    style: TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.w800, color: AppColors.pitchColor(usageEntries[i].key)),
-                  ),
-                ],
-              ],
+        // One block per pitch type, all three stats computed from this
+        // batter's pitches only (see BatterHistoryService).
+        for (final ps in t.byPitchType) ...[
+          const SizedBox(height: 8),
+          StatHoldInfo(
+            title: _pitchTypeLabel(ps.pitchType),
+            description: composeHoldInfo(
+              what: 'This block shows how this batter has done against one pitch type (usage %, whiff %, BAA and more), using only the pitches thrown to this batter.',
+              colorGuide: pitchTypeColorGuide([ps.pitchType]),
+            ),
+            child: Text(
+            '${_pitchTypeLabel(ps.pitchType)}'
+            '${ps.usagePct != null ? "  ${ps.usagePct!.round()}%" : ""}',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: AppColors.pitchColor(ps.pitchType)),
             ),
           ),
-        ],
-        if (t.mostCommonTwoStrikePitch != null || t.lastPitchThrown != null) ...[
-          const SizedBox(height: 4),
-          Text(
-            [
-              if (t.mostCommonTwoStrikePitch != null) '2-strike: ${_pitchTypeLabel(t.mostCommonTwoStrikePitch)}',
-              if (t.lastPitchThrown != null)
-                'Last: ${_pitchTypeLabel(t.lastPitchThrown)}'
-                    '${t.lastOutcome != null ? " (${outcomeFullNames[t.lastOutcome] ?? t.lastOutcome})" : ""}',
-            ].join('   ·   '),
-            style: const TextStyle(fontSize: 11, color: AppColors.colMuted),
-          ),
+          const SizedBox(height: 2),
+          Wrap(spacing: 14, runSpacing: 2, children: [
+            pitchStat('Whiff', pct(ps.whiffPct)),
+            pitchStat('BAA', _fmtRate(ps.baa)),
+            pitchStat('Strike', pct(ps.strikePct)),
+          ]),
         ],
       ],
     );
@@ -2575,7 +2658,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
         text: TextSpan(
           children: [
             TextSpan(text: '$value ', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppColors.ink)),
-            TextSpan(text: label, style: const TextStyle(fontSize: 10.5, color: AppColors.colMuted)),
+            TextSpan(text: label, style: const TextStyle(fontSize: 10.5, color: AppColors.colMuted, fontStyle: FontStyle.italic)),
           ],
         ),
       );
@@ -2594,7 +2677,13 @@ class _GameInputScreenState extends State<GameInputScreen> {
       runSpacing: 4,
       alignment: WrapAlignment.center,
       children: entries.map((e) {
-        return Row(
+        return StatHoldInfo(
+          title: outcomeFullNames[e.key] ?? e.key,
+          description: composeHoldInfo(
+            what: 'Each dot on the spray chart is one ball in play; the number in brackets is how many of this result there are.',
+            colorGuide: 'Dot color = the result (a label, not a good/bad grade):\n${sprayFillColorGuide()}',
+          ),
+          child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(width: 8, height: 8, decoration: BoxDecoration(color: AppColors.sprayColor(e.key), shape: BoxShape.circle)),
@@ -2602,12 +2691,13 @@ class _GameInputScreenState extends State<GameInputScreen> {
             Text('${outcomeFullNames[e.key] ?? e.key} (${e.value})',
                 style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: AppColors.colMuted)),
           ],
+          ),
         );
       }).toList(),
     );
   }
 
-  /// Full "every completed at-bat ever recorded against this Team + Jersey"
+  /// "Every completed at-bat BEFORE Last At-Bat against this Team + Jersey"
   /// view — opened from the Previous Sequences button. Each at-bat is a
   /// compact, collapsed-by-default row ("Game 12 · Ground Out · 4
   /// pitches") that expands to show its full pitch sequence, so a long
@@ -2635,12 +2725,23 @@ class _GameInputScreenState extends State<GameInputScreen> {
                 ),
                 const Divider(height: 1),
                 Expanded(
-                  child: ListView.separated(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    itemCount: history.atBats.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (_, i) => _atBatCard(history.atBats[i], history.jersey),
-                  ),
+                  child: history.previousSequences.isEmpty
+                      ? const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Text(
+                              'No earlier at-bats yet — the most recent completed one is shown as Last At-Bat.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(fontSize: 12, color: AppColors.colMuted),
+                            ),
+                          ),
+                        )
+                      : ListView.separated(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          itemCount: history.previousSequences.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 8),
+                          itemBuilder: (_, i) => _atBatCard(history.previousSequences[i], history.jersey),
+                        ),
                 ),
               ],
             ),

@@ -1,7 +1,9 @@
+import '../services/color_guides.dart';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import 'tier_scale_bar.dart';
 import 'value_bar.dart';
-import '../services/stats_service.dart' show statProgressFraction;
+import '../services/stats_service.dart' show statHasScale;
 import 'stat_hold_info.dart';
 
 /// Port of the R app's `.stat-vbox` / `mk_vb()` helper: a colored box
@@ -20,6 +22,17 @@ class StatVBox extends StatelessWidget {
   /// the default sizing leaves a lot of empty color around each value.
   final bool compact;
 
+  /// [perfHex] stat key this box's [background] was graded with; when set, the
+  /// hold popup lists that stat's exact color cutoffs.
+  final String? statKey;
+
+  /// Pre-built "Color Guide" text for boxes whose color isn't a plain
+  /// [statKey] ladder (relationship colors, fixed highlight colors).
+  final String? colorGuide;
+
+  /// One extra clarifying line added to the generated [statKey] guide.
+  final String? colorNote;
+
   const StatVBox({
     super.key,
     required this.label,
@@ -28,7 +41,20 @@ class StatVBox extends StatelessWidget {
     this.textColor = AppColors.colText,
     this.description,
     this.compact = false,
+    this.statKey,
+    this.colorGuide,
+    this.colorNote,
   });
+
+  String? get _holdText {
+    String? guide = colorGuide;
+    if (guide == null && statKey != null) {
+      final g = statColorGuide(statKey!, note: colorNote);
+      if (g.isNotEmpty) guide = g;
+    }
+    if (guide == null) return description;
+    return composeHoldInfo(what: description, colorGuide: guide);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +66,7 @@ class StatVBox extends StatelessWidget {
 
     return StatHoldInfo(
       title: label,
-      description: description,
+      description: _holdText,
       child: Container(
         padding: EdgeInsets.symmetric(vertical: vPad, horizontal: hPad),
         decoration: BoxDecoration(
@@ -77,17 +103,14 @@ class StatVBox extends StatelessWidget {
   }
 }
 
-/// A horizontal progress bar whose FILLED LENGTH is driven primarily by
-/// which of the 5 perf-tier colors [color] is (Excellent/Good/Average/
-/// BelowAvg/Poor), so every stat still visually communicates its quality
-/// tier at a glance — but *within* that tier, the length also reflects
-/// where the raw value actually falls, so two "Good" stats don't render
-/// as identical bars when one is barely Good and the other is nearly
-/// Excellent. Pass [rawValue] and [statKey] (the same key used for
-/// [perfHex]) to get this graduated sizing; the five small dots under the
-/// track mark where each next color tier begins. Without them, the bar
-/// falls back to a flat, ungraded fill (used for plain counts like PA/IP).
-/// The actual value is shown as text inside the filled portion of the bar.
+/// A horizontal progress bar for one stat.
+///
+/// Graded stats (pass [statKey] + [rawValue], the same key used for
+/// [perfHex]) render a [TierScaleBar]: a marker at the value's true position
+/// on the stat's scale (0-100 for percentages) over the five tier colors,
+/// ordered so the GOOD end is green - on the LEFT for lower-is-better stats
+/// (ERA, WHIP, BB%, ...) and on the RIGHT for higher-is-better ones (K%,
+/// Whiff%, ...). Plain counts (PA, IP, ...) keep a neutral full bar.
 class PerfStatBar extends StatelessWidget {
   final String label;
   final String value;
@@ -110,6 +133,10 @@ class PerfStatBar extends StatelessWidget {
   /// leave null for plain counts (PA, IP, etc.) that have no benchmark.
   final String? scaleHint;
 
+  /// One extra clarifying line added to the generated color guide (e.g. when
+  /// the bar borrows another stat's scale).
+  final String? colorNote;
+
   const PerfStatBar({
     super.key,
     required this.label,
@@ -119,22 +146,27 @@ class PerfStatBar extends StatelessWidget {
     this.rawValue,
     this.statKey,
     this.scaleHint,
+    this.colorNote,
   });
 
-  /// Continuous 0..1 fill length: uses the value's actual position on the
-  /// stat's scale when [statKey]/[rawValue] are given, otherwise falls
-  /// back to a flat full bar (plain, non-tiered counts like PA/IP).
-  double get _fraction => statProgressFraction(statKey, rawValue);
-
-  /// Where each next perf tier begins along the track (tiers are always
-  /// even fifths), and which color starts there — e.g. the dot at 20%
-  /// marks "Below Avg starts here" in that tier's color.
-  static const List<_TierTick> _tierKeyTicks = [
-    _TierTick(0.2, AppColors.perfBelowAvg),
-    _TierTick(0.4, AppColors.perfAverage),
-    _TierTick(0.6, AppColors.perfGood),
-    _TierTick(0.8, AppColors.perfExcellent),
-  ];
+  String? _holdText(bool graded) {
+    if (graded) {
+      final t = composeHoldInfo(
+        what: description,
+        colorGuide: statColorGuide(statKey!, bar: true, note: colorNote),
+      );
+      return t.isEmpty ? null : t;
+    }
+    if (description == null) return null;
+    if (color == AppColors.tint) {
+      return composeHoldInfo(
+        what: description,
+        colorGuide: swatchLine(AppColors.brandOrangeDeep,
+            'Orange bar: a plain count. The bar is always full and the color is not a good/bad grade, so there are no cutoffs.'),
+      );
+    }
+    return description;
+  }
 
   /// Text sitting on top of [bg] needs to be readable against it — white on
   /// the dark/saturated tier colors, dark text on the light ones.
@@ -150,18 +182,15 @@ class PerfStatBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final frac = _fraction;
-    // Plain/unrated counts (PA, IP, ...) use the neutral tint fill — render the
-    // bar itself in the stronger brand orange so it's visible against the track.
+    final graded = statHasScale(statKey);
+    // Plain/unrated counts use the neutral tint fill - render the bar itself
+    // in the stronger brand orange so it's visible against the track.
     final barColor = color == AppColors.tint ? AppColors.brandOrangeDeep : color;
     final onBarColor = _onBarTextColor(barColor);
-    // Graded stats only: small dots marking where each next tier begins,
-    // so the bar doubles as its own color key.
-    final showKeyDots = statKey != null;
 
     return StatHoldInfo(
       title: label,
-      description: description,
+      description: _holdText(graded),
       child: Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Column(
@@ -183,39 +212,17 @@ class PerfStatBar extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 5),
-          // Full-width track; the filled portion (length = value's position
-          // within its perf tier) shows the stat's value inside it,
-          // right-aligned within the fill. For graded stats, small dots
-          // mark where each next color tier begins, doubling as a key.
-          ValueBar(
-            fraction: frac,
-            color: barColor,
-            text: value,
-            textColor: onBarColor,
-            overlay: !showKeyDots
-                ? null
-                : (trackWidth) => Stack(
-                      children: [
-                        for (final tick in _tierKeyTicks)
-                          Positioned(
-                            left: (trackWidth * tick.at) - 3.5,
-                            top: 0,
-                            bottom: 0,
-                            child: Center(
-                              child: Container(
-                                width: 7,
-                                height: 7,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: tick.color,
-                                  border: Border.all(color: Colors.white, width: 1.25),
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-          ),
+          // Graded stat: tier-colored scale with a marker at the real value.
+          // Plain counts: neutral full bar.
+          if (graded)
+            TierScaleBar(statKey: statKey!, rawValue: rawValue, valueText: value)
+          else
+            ValueBar(
+              fraction: 1.0,
+              color: barColor,
+              text: value,
+              textColor: onBarColor,
+            ),
           if (scaleHint != null) ...[
             const SizedBox(height: 3),
             Text(
@@ -234,14 +241,6 @@ class PerfStatBar extends StatelessWidget {
   }
 }
 
-/// A single tier-boundary marker on a [PerfStatBar] track: [at] is the 0..1
-/// position along the bar, [color] is the tier that begins there.
-class _TierTick {
-  final double at;
-  final Color color;
-  const _TierTick(this.at, this.color);
-}
-
 /// Reusable "what do the colors mean" key for any screen that uses the
 /// 5-tier perf_hex color coding (green → yellow → orange → red).
 /// Drop `const PerfTierLegend()` into a Filter card on any stats screen.
@@ -250,12 +249,29 @@ class PerfTierLegend extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(spacing: 6, runSpacing: 6, children: const [
-      LegendChip(label: '5 – Excellent', color: AppColors.perfExcellent),
-      LegendChip(label: '4 – Good', color: AppColors.perfGood),
-      LegendChip(label: '3 – Avg', color: AppColors.perfAverage, textColor: AppColors.colText),
-      LegendChip(label: '2 – Below', color: AppColors.perfBelowAvg),
-      LegendChip(label: '1 – Poor', color: AppColors.perfPoor),
+    Widget chip(int tier, String label, Color color, String name, {Color textColor = Colors.white}) {
+      final k = statTierLines('K_pct');
+      final era = statTierLines('ERA');
+      final idx = 4 - tier;
+      return StatHoldInfo(
+        title: '$label tier',
+        description: composeHoldInfo(
+          what: 'Every graded stat in the app is sorted into one of these 5 tiers and colored to match. '
+              'The cutoffs are different for each stat, so press and hold the colored stat itself for its exact numbers.',
+          colorGuide: 'This color means "$name".\n'
+              'Example - K% (higher is better):\n${idx < k.length ? k[idx] : ''}\n'
+              'Example - ERA (lower is better):\n${idx < era.length ? era[idx] : ''}',
+        ),
+        child: LegendChip(label: label, color: color, textColor: textColor),
+      );
+    }
+
+    return Wrap(spacing: 6, runSpacing: 6, children: [
+      chip(4, '5 – Excellent', AppColors.perfExcellent, 'Excellent'),
+      chip(3, '4 – Good', AppColors.perfGood, 'Good'),
+      chip(2, '3 – Avg', AppColors.perfAverage, 'Average', textColor: AppColors.colText),
+      chip(1, '2 – Below', AppColors.perfBelowAvg, 'Below average'),
+      chip(0, '1 – Poor', AppColors.perfPoor, 'Poor'),
     ]);
   }
 }

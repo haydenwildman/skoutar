@@ -246,7 +246,6 @@ class AppSession extends ChangeNotifier {
 
   bool get isLoggedIn => currentUser != null;
   bool get isPlus => currentUser?.isPlus ?? false;
-  bool get isAdmin => currentUser?.isAdmin ?? false;
 
   /// True once the very first plate appearance of the lineup has
   /// completed. Before this, the batting order is still being bootstrapped

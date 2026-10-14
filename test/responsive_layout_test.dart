@@ -46,7 +46,7 @@ void main() {
       testWidgets('LoginScreen has no layout errors at ${w.toInt()}px', (tester) async {
         await _pump(tester, w, const LoginScreen());
         expect(tester.takeException(), isNull);
-        expect(find.text('Pitching Analytics'), findsOneWidget);
+        expect(find.text('Sign in to your account'), findsOneWidget);
       });
 
       testWidgets('SignupScreen has no layout errors at ${w.toInt()}px', (tester) async {

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../services/app_session.dart';
 import '../services/stats_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/glow.dart';
 import '../widgets/stat_vbox.dart';
 import '../widgets/year_filter_dropdown.dart';
 
@@ -85,7 +86,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Card(
+        GlowCard(
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -133,7 +134,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
             ),
           ),
         ),
-        Card(
+        GlowCard(
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -156,7 +157,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
             ),
           ),
         ),
-        Card(
+        GlowCard(
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/app_session.dart';
 import '../theme/app_theme.dart';
+import '../widgets/skoutar_logo.dart';
 import '../utils/responsive.dart';
 import '../widgets/sidebar_nav.dart';
 import 'login_screen.dart';
@@ -15,7 +16,6 @@ import 'pitch_sequencing_screen.dart';
 import 'scouting_report_screen.dart';
 import 'edit_raw_data_screen.dart';
 import 'edit_at_bats_screen.dart';
-import 'admin_panel_screen.dart';
 
 /// The authenticated shell of the app: persistent sidebar + a body that
 /// swaps between the feature screens, mirroring the R app's
@@ -43,7 +43,6 @@ class _HomeShellState extends State<HomeShell> {
     for (final item in mainNavItems) {
       if (item.label == label) return item.icon;
     }
-    if (adminNavItem.label == label) return adminNavItem.icon;
     return Icons.circle_outlined;
   }
 
@@ -69,8 +68,6 @@ class _HomeShellState extends State<HomeShell> {
         return const EditRawDataScreen();
       case 'Edit At-Bats':
         return const EditAtBatsScreen();
-      case 'Admin Panel':
-        return const AdminPanelScreen();
       default:
         return const GameInputScreen();
     }
@@ -92,7 +89,6 @@ class _HomeShellState extends State<HomeShell> {
         if (isNarrow) _scaffoldKey.currentState?.closeDrawer();
       },
       isPlus: session.isPlus,
-      isAdmin: session.isAdmin,
       pitcherName:
           session.currentUser?.pitcherDisplayName ?? session.currentUser?.username ?? '—',
       onLogout: () async {
@@ -118,7 +114,7 @@ class _HomeShellState extends State<HomeShell> {
           title: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Image.asset('assets/images/logo.png', height: 26, fit: BoxFit.contain, filterQuality: FilterQuality.high),
+              SkoutarLogo(height: 32),
               const SizedBox(width: 8),
               Icon(_iconFor(_selected), size: 18, color: AppColors.navIconOrange),
               const SizedBox(width: 6),
@@ -181,7 +177,7 @@ class _HomeShellState extends State<HomeShell> {
                   ),
                   child: Row(
                     children: [
-                      Image.asset('assets/images/logo.png', height: 28, fit: BoxFit.contain, filterQuality: FilterQuality.high),
+                      SkoutarLogo(height: 32),
                       const SizedBox(width: 10),
                       Icon(_iconFor(_selected), size: 19, color: AppColors.ink),
                       const SizedBox(width: 8),

@@ -27,20 +27,31 @@ Future<void> main() async {
   runApp(
     ChangeNotifierProvider.value(
       value: session,
-      child: const PitchingAnalyticsApp(),
+      child: const SkoutarApp(),
     ),
   );
 }
 
-class PitchingAnalyticsApp extends StatelessWidget {
-  const PitchingAnalyticsApp({super.key});
+class SkoutarApp extends StatelessWidget {
+  const SkoutarApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Pitching Analytics',
+      title: 'SKOUTAR',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
+      // Teko is narrower/smaller-looking than Roboto at the same point size;
+      // scale all text once, globally, instead of editing every TextStyle.
+      builder: (context, child) {
+        final mq = MediaQuery.of(context);
+        return MediaQuery(
+          data: mq.copyWith(
+            textScaler: TextScaler.linear(mq.textScaler.scale(1.0) * AppFonts.textScale),
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       home: const _RootRouter(),
     );
   }

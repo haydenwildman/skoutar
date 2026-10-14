@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../services/app_session.dart';
 import '../services/stats_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/glow.dart';
 import '../widgets/stat_vbox.dart';
 import '../widgets/year_filter_dropdown.dart';
 import 'plus_lock_card.dart';
@@ -70,7 +71,7 @@ class _CountApproachScreenState extends State<CountApproachScreen> {
 
     Widget bucketCard(String title, int pa, double? obp) {
       final bg = perfHex('OBP_allowed', obp);
-      return Card(
+      return GlowCard(
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
@@ -102,7 +103,7 @@ class _CountApproachScreenState extends State<CountApproachScreen> {
     Widget groupedCountCard(String title, int pa, double? pct, double? obp, String pctLabel) {
       final pctBg = perfHex(pctLabel == "Two-Strike Count %" ? 'f_strike' : 'BB_pct', pct);
       final obpBg = perfHex('OBP_allowed', obp);
-      return Card(
+      return GlowCard(
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
@@ -123,6 +124,9 @@ class _CountApproachScreenState extends State<CountApproachScreen> {
                 description: _countInfo[pctLabel],
                 scaleHint: statScaleHint(pctLabel == "Two-Strike Count %" ? 'f_strike' : 'BB_pct'),
                 statKey: pctLabel == "Two-Strike Count %" ? 'f_strike' : 'BB_pct',
+                colorNote: pctLabel == "Two-Strike Count %"
+                    ? 'This bar is graded on the same cutoffs as First-Pitch Strike % (F-Strike%).'
+                    : 'This bar is graded on the same cutoffs as Walk % (BB%), so a larger hitter\'s-count share trends toward orange/red.',
                 rawValue: pct,
               ),
               PerfStatBar(
@@ -143,7 +147,7 @@ class _CountApproachScreenState extends State<CountApproachScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Card(
+        GlowCard(
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -187,7 +191,7 @@ class _CountApproachScreenState extends State<CountApproachScreen> {
             ),
           ),
         ),
-        Card(
+        GlowCard(
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(

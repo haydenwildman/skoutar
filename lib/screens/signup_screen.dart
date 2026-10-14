@@ -1,9 +1,12 @@
+import '../widgets/orange_glow_button.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/user.dart';
 import '../services/app_session.dart';
 import '../services/billing_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/glow.dart';
+import '../widgets/skoutar_logo.dart';
 import '../utils/responsive.dart';
 
 class SignupScreen extends StatefulWidget {
@@ -106,18 +109,12 @@ class _SignupScreenState extends State<SignupScreen> {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.35),
-                  blurRadius: 40,
-                  offset: const Offset(0, 12),
-                ),
-              ],
+              boxShadow: AppGlow.shadowsRaised,
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Image.asset('assets/images/logo.png', height: 56, fit: BoxFit.contain, filterQuality: FilterQuality.high),
+                SkoutarLogo(height: 88),
                 const SizedBox(height: 8),
                 const Text('Create Account',
                     style: TextStyle(
@@ -125,7 +122,7 @@ class _SignupScreenState extends State<SignupScreen> {
                         fontWeight: FontWeight.w900,
                         color: AppColors.ink)),
                 const SizedBox(height: 4),
-                const Text('Pitching Analytics — Start for free',
+                const Text('SKOUTAR — Start for free',
                     style: TextStyle(color: Colors.grey, fontSize: 13)),
                 const SizedBox(height: 20),
                 if (_message != null)
@@ -196,7 +193,7 @@ class _SignupScreenState extends State<SignupScreen> {
                 const SizedBox(height: 8),
                 SizedBox(
                   width: double.infinity,
-                  child: ElevatedButton(
+                  child: OrangeGlowButton(
                     onPressed: _loading ? null : _doSignup,
                     child: const Text('Create Account →'),
                   ),

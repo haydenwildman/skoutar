@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../models/pitch_event.dart';
 import '../services/app_session.dart';
 import '../theme/app_theme.dart';
+import '../widgets/glow.dart';
 import '../widgets/baseball_field_painter.dart';
 import '../widgets/stat_vbox.dart';
+import '../widgets/stat_hold_info.dart';
+import '../services/color_guides.dart';
 import '../widgets/year_filter_dropdown.dart';
 
 class SprayChartScreen extends StatefulWidget {
@@ -35,15 +39,32 @@ class _SprayChartScreenState extends State<SprayChartScreen> {
         data = data.where((p) => p.outcome == _outcome).toList();
       }
     }
-    if (_pitch != 'All') data = data.where((p) => p.pitchType == _pitch).toList();
     if (_hand != 'All') data = data.where((p) => p.hand == _hand).toList();
+
+    // Pitch key / Pitch filter: built from the pitch types that actually
+    // appear in the spray data being shown (before the Pitch filter itself, so
+    // picking one pitch doesn't empty the key). Add a pitch type and it shows
+    // up; once no ball in play uses a type, it drops out. Nothing hard-coded.
+    String keyOf(PitchEvent p) {
+      final t = (p.pitchType ?? '').toLowerCase().trim();
+      return t.isEmpty ? 'other' : t;
+    }
+    const preferredOrder = ['fb', 'sl', 'cv', 'ch'];
+    final present = {for (final p in data) keyOf(p)};
+    final pitchKeys = [
+      ...preferredOrder.where(present.contains),
+      ...(present.difference(preferredOrder.toSet()).toList()..sort()),
+    ];
+    // A pitch filter whose type has since disappeared falls back to All.
+    final activePitch = pitchKeys.contains(_pitch) ? _pitch : 'All';
+    if (activePitch != 'All') data = data.where((p) => keyOf(p) == activePitch).toList();
 
     final teams = ['All', ...session.knownTeams];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Card(
+        GlowCard(
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Wrap(
@@ -76,9 +97,9 @@ class _SprayChartScreenState extends State<SprayChartScreen> {
                   width: 130,
                   child: DropdownButtonFormField<String>(
                     isExpanded: true,
-                    value: _pitch,
+                    value: activePitch,
                     decoration: const InputDecoration(labelText: 'Pitch'),
-                    items: ['All', 'fb', 'cv', 'ch', 'sl', 'other']
+                    items: ['All', ...pitchKeys]
                         .map((o) => DropdownMenuItem(value: o, child: Text(o, overflow: TextOverflow.ellipsis)))
                         .toList(),
                     onChanged: (v) => setState(() => _pitch = v!),
@@ -101,18 +122,31 @@ class _SprayChartScreenState extends State<SprayChartScreen> {
             ),
           ),
         ),
-        Card(
+        GlowCard(
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Wrap(spacing: 6, runSpacing: 6, children: [
               const Text('Fill = Result:', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
-              for (final k in ['1b', '2b', '3b', 'hr', 'e', 'fc'])
-                LegendChip(label: k.toUpperCase(), color: AppColors.sprayColor(k)),
-              LegendChip(label: 'OUT', color: AppColors.sprayColor('out')),
+              for (final k in ['1b', '2b', '3b', 'hr', 'e', 'fc', 'out'])
+                StatHoldInfo(
+                  title: 'Fill = Result',
+                  description: composeHoldInfo(
+                    what: 'The inside color of each dot is what happened on the ball in play.',
+                    colorGuide: sprayFillColorGuide(),
+                  ),
+                  child: LegendChip(label: k.toUpperCase(), color: AppColors.sprayColor(k)),
+                ),
               const SizedBox(width: 16),
               const Text('Ring = Pitch:', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
-              for (final k in ['fb', 'sl', 'cv', 'ch'])
-                LegendChip(label: k.toUpperCase(), color: AppColors.pitchColor(k)),
+              for (final k in pitchKeys)
+                StatHoldInfo(
+                  title: 'Ring = Pitch',
+                  description: composeHoldInfo(
+                    what: 'The outline color around each dot is the pitch type that was hit.',
+                    colorGuide: sprayRingColorGuide(pitchKeys),
+                  ),
+                  child: LegendChip(label: k.toUpperCase(), color: AppColors.pitchColor(k)),
+                ),
               const SizedBox(width: 16),
               const Text('Trajectory:', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
               const _TrajectoryLegendItem(label: 'Ground Ball — dotted', style: _TrajStyle.dotted),
@@ -121,7 +155,7 @@ class _SprayChartScreenState extends State<SprayChartScreen> {
             ]),
           ),
         ),
-        Card(
+        GlowCard(
           elevation: 3,
           child: Padding(
             padding: const EdgeInsets.all(10),
@@ -138,7 +172,17 @@ class _SprayChartScreenState extends State<SprayChartScreen> {
                       child: data.isEmpty
                           ? const Center(
                               child: Text('No spray data yet.', style: TextStyle(color: Colors.grey)))
-                          : SprayFieldSurface(sprayPoints: data),
+                          : StatHoldInfo(
+                              title: 'Spray Chart',
+                              description: composeHoldInfo(
+                                what: 'Every ball in play is a dot placed where it landed on the field, seen from behind home plate. '
+                                    'Dot fill = what happened, the ring around it = which pitch was hit, and the line from home plate shows the batted-ball type '
+                                    '(dotted = ground ball, straight = line drive, arc = fly ball). Clusters show where hitters put the ball.',
+                                colorGuide: 'Fill (result):\n${sprayFillColorGuide()}\n\nRing (pitch):\n${sprayRingColorGuide(pitchKeys)}\n\n'
+                                    'These are labels, not good/bad grades, so there are no numeric cutoffs.',
+                              ),
+                              child: SprayFieldSurface(sprayPoints: data),
+                            ),
                     ),
                   ),
                 ),
@@ -167,7 +211,7 @@ class _TrajectoryLegendItem extends StatelessWidget {
         child: CustomPaint(painter: _TrajSwatchPainter(style)),
       ),
       const SizedBox(width: 4),
-      Text(label, style: const TextStyle(fontSize: 11, color: AppColors.colMuted)),
+      Text(label, style: const TextStyle(fontSize: 11, color: AppColors.colMuted, fontStyle: FontStyle.italic)),
     ]);
   }
 }

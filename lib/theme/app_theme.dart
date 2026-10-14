@@ -10,6 +10,27 @@ import 'package:flutter/material.dart';
 ///     PERF_COLORS / pitch & spray palettes. These must NEVER change just
 ///     because the UI theme does; the exact hex values are what make the
 ///     charts read the same as the Shiny app.
+/// Single source of truth for the app's typeface. SKOUTAR uses Teko
+/// everywhere (bundled in assets/fonts so it loads offline and never
+/// depends on a network font request). To change the font app-wide, change
+/// [family] here and the `fonts:` block in pubspec.yaml — nothing else.
+///
+/// Teko ships 300-700 upright weights only. Any heavier request (w800/w900,
+/// used throughout the app) resolves to Bold (700); italics are the
+/// engine's synthetic oblique of the upright face.
+class AppFonts {
+  static const String family = 'Teko';
+
+  /// Teko's lowercase/x-height is small and its letterforms are narrow, so
+  /// the whole app is scaled up slightly (applied once in MaterialApp.builder)
+  /// to keep it as readable as the old font at the same nominal sizes.
+  static const double textScale = 1.12;
+
+  /// For canvas/chart text that does NOT inherit the theme (TextPainter,
+  /// fl_chart tooltips): `TextStyle(fontFamily: AppFonts.family, ...)`.
+  static const TextStyle base = TextStyle(fontFamily: family);
+}
+
 class AppColors {
   // Performance tiers (used to color-code stat boxes / tables)
   static const Color perfExcellent = Color(0xFF15803D);
@@ -162,7 +183,7 @@ ThemeData buildAppTheme() {
       primary: AppColors.brandOrangeDeep,
       secondary: AppColors.brandOrange,
     ),
-    fontFamily: 'Roboto',
+    fontFamily: AppFonts.family,
     cardTheme: CardThemeData(
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -174,6 +195,8 @@ ThemeData buildAppTheme() {
     // Gives dialogs a little more room on phones; no visible change on
     // desktop where dialogs are far narrower than the window.
     dialogTheme: const DialogThemeData(
+      elevation: 10,
+      shadowColor: Color(0xB3ED652A),
       insetPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 24),
     ),
     appBarTheme: const AppBarTheme(
@@ -188,7 +211,7 @@ ThemeData buildAppTheme() {
         foregroundColor: Colors.white,
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        textStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+        textStyle: const TextStyle(fontFamily: AppFonts.family, fontWeight: FontWeight.w800, fontSize: 14),
       ),
     ),
     inputDecorationTheme: InputDecorationTheme(
@@ -221,6 +244,7 @@ ThemeData buildAppTheme() {
         ],
       ),
       textStyle: const TextStyle(
+        fontFamily: AppFonts.family,
         color: Colors.white,
         fontSize: 12,
         fontWeight: FontWeight.w600,

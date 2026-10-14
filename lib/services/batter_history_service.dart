@@ -1,4 +1,5 @@
 import '../models/pitch_event.dart';
+import 'stats_service.dart';
 
 /// One completed (or in-progress) plate appearance's full pitch sequence,
 /// against a specific Team + Jersey #. Built by [BatterHistoryService] —
@@ -34,36 +35,55 @@ class AtBatSequence {
   }
 }
 
+/// One pitch type's results against ONE specific batter (Team + Jersey #).
+/// Computed with the same [StatsService.pitchBreakdown] math the Pitch
+/// Breakdown tab uses, but fed only this batter's pitches — never the
+/// pitcher's overall or all-batters numbers. A rate with an empty
+/// denominator is null so the UI shows "N/A" instead of a misleading 0%.
+class BatterPitchTypeStats {
+  final String pitchType;
+  final int pitches;
+  final double? usagePct;
+  final double? whiffPct; // swinging misses / swings
+  final double? baa; // hits / official at-bats ended on this pitch type
+  final double? strikePct; // strikes / pitches
+
+  const BatterPitchTypeStats({
+    required this.pitchType,
+    required this.pitches,
+    required this.usagePct,
+    required this.whiffPct,
+    required this.baa,
+    required this.strikePct,
+  });
+}
+
 /// Aggregate tendencies against this specific Team + Jersey #, computed
-/// only from previous at-bats against them — never used to suggest what to
+/// only from this batter's pitches — never used to suggest what to
 /// throw, purely informational (per the redesign spec).
 class BatterTendencies {
   final int totalAtBats;
   final int totalPitches;
   final Map<String, int> pitchUsageCounts; // pitchType key -> count
   final String? mostFrequentPitch;
-  final Map<String, int> twoStrikePitchCounts; // pitchType key -> count
-  final String? mostCommonTwoStrikePitch;
   final int strikeouts;
   final int walks;
   final int foulBalls;
   final int ballsInPlay;
-  final String? lastPitchThrown;
-  final String? lastOutcome;
+
+  /// Per-pitch-type Whiff % / BAA / Strike % for this batter, most-used first.
+  final List<BatterPitchTypeStats> byPitchType;
 
   const BatterTendencies({
     required this.totalAtBats,
     required this.totalPitches,
     required this.pitchUsageCounts,
     required this.mostFrequentPitch,
-    required this.twoStrikePitchCounts,
-    required this.mostCommonTwoStrikePitch,
     required this.strikeouts,
     required this.walks,
     required this.foulBalls,
     required this.ballsInPlay,
-    required this.lastPitchThrown,
-    required this.lastOutcome,
+    required this.byPitchType,
   });
 
   bool get hasData => totalAtBats > 0;
@@ -147,41 +167,111 @@ class BatterHistory {
     required this.offense,
   });
 
-  bool get hasData => atBats.isNotEmpty;
-  AtBatSequence? get lastAtBat => atBats.isEmpty ? null : atBats.first;
+  /// Every at-bat that has an outcome, newest first. An at-bat with no
+  /// outcome yet is the one being thrown right now ([currentAtBat]) and
+  /// never belongs in a history list.
+  List<AtBatSequence> get completedAtBats =>
+      [for (final ab in atBats) if (ab.finalOutcome != null) ab];
+
+  /// The at-bat currently in progress against this batter, if any.
+  AtBatSequence? get currentAtBat {
+    for (final ab in atBats) {
+      if (ab.finalOutcome == null) return ab;
+    }
+    return null;
+  }
+
+  bool get hasData => completedAtBats.isNotEmpty;
+
+  /// Times this batter has been fully faced so far this game.
+  int get timesFaced => completedAtBats.length;
+
+  /// Which plate appearance of the game this is for him (1 = first).
+  int get currentPlateAppearance => timesFaced + 1;
+
+  /// Last Sequence: the most recently COMPLETED at-bat against this batter
+  /// (never the current, in-progress one).
+  AtBatSequence? get lastAtBat {
+    final done = completedAtBats;
+    return done.isEmpty ? null : done.first;
+  }
+
+  /// Previous Sequences: completed at-bats strictly older than
+  /// [lastAtBat] — so nothing shown as Last Sequence (or as the current
+  /// at-bat) is ever repeated here.
+  List<AtBatSequence> get previousSequences {
+    final done = completedAtBats;
+    return done.length <= 1 ? const [] : done.sublist(1);
+  }
 }
 
 class BatterHistoryService {
-  /// Builds the full cross-game history for [team] + [jersey]. Both must
-  /// match — this is never looked up by jersey # alone, so the same # on a
-  /// different team is correctly treated as a different batter.
+  /// Builds the history of ONE batter within ONE game: every plate
+  /// appearance (PA) he has had so far, finished or in progress.
+  ///
+  /// Identity: a batter is the jersey # within the current game — the same
+  /// [team] + [gameNumber] + [season] the live Game Input screen is logging
+  /// to. Rows from any other game are never considered, so a batter's first
+  /// PA of THIS game always starts with no history, and a different game
+  /// against the same team can never leak in.
+  ///
+  /// How PAs are found (deliberately NOT via `paId`, which only advances
+  /// once per lineup and so is the same on every PA after the first): the
+  /// game's pitch rows are walked in logged order. A PA is a run of pitches
+  /// that ends at the first pitch carrying an outcome (strikeout, walk,
+  /// hit-by-pitch, ball in play ...); the next pitch starts a new PA. A
+  /// change in the stored PA sequence number (`batter`) also starts a new
+  /// PA, as a safety net. Each PA is then credited to the jersey # on its
+  /// LAST pitch, so correcting a mistyped jersey # mid-at-bat doesn't split
+  /// one PA across two batters.
   static BatterHistory build({
     required List<PitchEvent> allPitches,
     required String team,
     required int jersey,
+    required int gameNumber,
+    required int season,
   }) {
     // Only real pitches (not pickoffs/balks/etc.) count toward an at-bat
     // sequence. `allPitches` is already in chronological (append) order.
-    final relevant = allPitches
-        .where((p) =>
-            p.eventType == 'pitch' && p.game == team && p.batterNumber == jersey)
-        .toList();
+    final gamePitches = allPitches.where((p) =>
+        p.eventType == 'pitch' &&
+        p.game == team &&
+        p.gameNumber == gameNumber &&
+        p.season == season);
 
-    // Group into plate appearances. The same key used elsewhere in the app
-    // to identify a unique PA (game + game# + season + batter seq + paId)
-    // — including season/gameNumber here is what keeps two different games
-    // against the same team from ever bleeding into each other.
-    final order = <String>[];
-    final groups = <String, List<PitchEvent>>{};
-    for (final p in relevant) {
-      final key = '${p.game}|${p.gameNumber}|${p.season}|${p.batter}|${p.paId}';
-      if (!groups.containsKey(key)) order.add(key);
-      groups.putIfAbsent(key, () => []).add(p);
+    // 1. Split the whole game into plate appearances (every batter).
+    final allPAs = <List<PitchEvent>>[];
+    List<PitchEvent>? open;
+    int? openSeq;
+    for (final p in gamePitches) {
+      if (open == null || openSeq != p.batter) {
+        open = <PitchEvent>[];
+        allPAs.add(open);
+        openSeq = p.batter;
+      }
+      open.add(p);
+      if (p.isFinalPitchOfPA) {
+        open = null; // PA finished — the next pitch is a new PA
+        openSeq = null;
+      }
     }
 
+    // 2. Keep this batter's PAs (jersey on the PA's last tagged pitch).
+    int? jerseyOf(List<PitchEvent> pa) {
+      for (final p in pa.reversed) {
+        if (p.batterNumber != null) return p.batterNumber;
+      }
+      return null;
+    }
+
+    final mine = [
+      for (final pa in allPAs)
+        if (jerseyOf(pa) == jersey) pa,
+    ];
+    final relevant = [for (final pa in mine) ...pa];
+
     final atBats = <AtBatSequence>[];
-    for (final key in order) {
-      final pitchesInPA = groups[key]!;
+    for (final pitchesInPA in mine) {
       final counts = <(String, String)>[];
       int b = 0, s = 0;
       for (final p in pitchesInPA) {
@@ -213,21 +303,22 @@ class BatterHistoryService {
       ));
     }
 
-    // Newest first.
-    atBats.sort((a, b) => b.date.compareTo(a.date));
+    // Newest first = reverse logged order (more reliable than timestamps,
+    // which can tie or be edited).
+    final newestFirst = atBats.reversed.toList();
 
     final sprayPoints = <PitchEvent>[
-      for (final ab in atBats)
+      for (final ab in newestFirst)
         if (ab.ballInPlayPitch != null) ab.ballInPlayPitch!,
     ];
 
-    final tendencies = _computeTendencies(atBats, relevant);
-    final offense = _computeOffense(atBats);
+    final tendencies = _computeTendencies(newestFirst, relevant);
+    final offense = _computeOffense(newestFirst);
 
     return BatterHistory(
       opponent: team,
       jersey: jersey,
-      atBats: atBats,
+      atBats: newestFirst,
       sprayPoints: sprayPoints,
       tendencies: tendencies,
       offense: offense,
@@ -274,7 +365,6 @@ class BatterHistoryService {
   static BatterTendencies _computeTendencies(
       List<AtBatSequence> atBats, List<PitchEvent> relevant) {
     final usage = <String, int>{};
-    final twoStrike = <String, int>{};
     int strikeouts = 0, walks = 0, fouls = 0, bip = 0;
 
     for (final p in relevant) {
@@ -287,14 +377,6 @@ class BatterHistoryService {
     for (final ab in atBats) {
       if (ab.finalOutcome == 'k' || ab.finalOutcome == 'kl') strikeouts++;
       if (ab.finalOutcome == 'bb') walks++;
-      for (var i = 0; i < ab.pitches.length; i++) {
-        final before = ab.counts[i].$1; // "b-s"
-        final strikesBefore = int.tryParse(before.split('-').last) ?? 0;
-        if (strikesBefore >= 2) {
-          final pt = ab.pitches[i].pitchType;
-          if (pt != null) twoStrike[pt] = (twoStrike[pt] ?? 0) + 1;
-        }
-      }
     }
 
     String? mostFrequent(Map<String, int> m) {
@@ -310,21 +392,32 @@ class BatterHistoryService {
       return bestKey;
     }
 
-    final lastAb = atBats.isEmpty ? null : atBats.first;
+    // Per-pitch-type Whiff % / BAA / Strike %. `relevant` is already
+    // filtered to this Team + Jersey # only, so these are this batter's
+    // numbers — and they come from the exact same calc the Pitch Breakdown
+    // tab uses (StatsService.pitchBreakdown), just on that smaller set.
+    final byPitchType = <BatterPitchTypeStats>[
+      for (final row in StatsService.pitchBreakdown(relevant))
+        BatterPitchTypeStats(
+          pitchType: row['pitchType'] as String,
+          pitches: row['n'] as int,
+          usagePct: row['usagePct'] as double?,
+          whiffPct: row['whiffPct'] as double?,
+          baa: row['avgAgainst'] as double?,
+          strikePct: row['strikePct'] as double?,
+        ),
+    ];
 
     return BatterTendencies(
-      totalAtBats: atBats.length,
+      totalAtBats: atBats.where((a) => a.finalOutcome != null).length,
       totalPitches: relevant.length,
       pitchUsageCounts: usage,
       mostFrequentPitch: mostFrequent(usage),
-      twoStrikePitchCounts: twoStrike,
-      mostCommonTwoStrikePitch: mostFrequent(twoStrike),
       strikeouts: strikeouts,
       walks: walks,
       foulBalls: fouls,
       ballsInPlay: bip,
-      lastPitchThrown: lastAb == null ? null : lastAb.pitches.last.pitchType,
-      lastOutcome: lastAb?.finalOutcome,
+      byPitchType: byPitchType,
     );
   }
 }

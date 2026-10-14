@@ -77,10 +77,26 @@ class ScoutingPdfService {
   }
 
   static Future<Uint8List> generate(ScoutingReportData r) async {
-    final doc = pw.Document();
+    // SKOUTAR typeface: Teko (bundled), regular + bold. Falls back to the
+    // PDF default font if the assets can't be read, so export never fails.
+    pw.ThemeData? pdfTheme;
+    try {
+      final reg = pw.Font.ttf(await rootBundle.load('assets/fonts/Teko-Regular.ttf'));
+      final bold = pw.Font.ttf(await rootBundle.load('assets/fonts/Teko-Bold.ttf'));
+      pdfTheme = pw.ThemeData.withFont(base: reg, bold: bold, italic: reg, boldItalic: bold);
+    } catch (_) {
+      pdfTheme = null;
+    }
+    final doc = pw.Document(theme: pdfTheme);
     pw.MemoryImage? logo;
     try {
-      final bytes = await rootBundle.load('assets/images/logo.png');
+      // Use the 2x variant so the PDF logo stays sharp; fall back to the base file.
+      ByteData bytes;
+      try {
+        bytes = await rootBundle.load('assets/images/2.0x/logo.png');
+      } catch (_) {
+        bytes = await rootBundle.load('assets/images/logo.png');
+      }
       logo = pw.MemoryImage(bytes.buffer.asUint8List());
     } catch (_) {
       logo = null;
@@ -144,7 +160,7 @@ class ScoutingPdfService {
     return pw.Column(children: [
       pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.center, children: [
         if (logo != null) ...[
-          pw.Image(logo, width: 34, height: 34),
+          pw.Image(logo, width: 48, height: 38, fit: pw.BoxFit.contain),
           pw.SizedBox(width: 10),
         ],
         pw.Expanded(

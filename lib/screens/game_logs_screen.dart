@@ -4,7 +4,10 @@ import 'package:provider/provider.dart';
 import '../services/app_session.dart';
 import '../services/stats_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/glow.dart';
 import '../widgets/stat_vbox.dart';
+import '../widgets/stat_hold_info.dart';
+import '../services/color_guides.dart';
 import '../widgets/year_filter_dropdown.dart';
 
 class GameLogsScreen extends StatefulWidget {
@@ -37,7 +40,7 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
           .toSet()
     ];
 
-    final filterRow = Card(
+    final filterRow = GlowCard(
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -87,7 +90,7 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           filterRow,
-          const Card(
+          const GlowCard(
             child: Padding(
               padding: EdgeInsets.all(24),
               child: Text('No games logged yet.', style: TextStyle(color: Colors.grey)),
@@ -113,6 +116,7 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
       // every 0.5 units) and the same opponent name gets drawn twice along
       // the line instead of once, right at its dot.
       final maxIndex = (log.length - 1).toDouble();
+      const xPad = 1.0; // game-slots of room left/right of the first/last dot
       // Pad the Y range so a dot sitting exactly at the data's min/max
       // isn't drawn right on the clip boundary (which was cutting the
       // circle markers in half at the top/bottom of the chart).
@@ -127,10 +131,19 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
         maxY = hiY + pad;
         if (minY > 0 && loY >= 0 && minY < pad) minY = 0; // don't go negative for %/count stats needlessly
       }
-      return Card(
+      return GlowCard(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(10, 10, 18, 10),
-          child: Column(
+          child: StatHoldInfo(
+            title: title,
+            description: composeHoldInfo(
+              what: 'One dot per game, in game order (left to right). The height of a dot is that game\'s value, '
+                  'and the label under it is the opponent. Use it to see whether the stat is trending the right way over the season.',
+              colorGuide: 'The line is a fixed color that just identifies this chart; it is not graded.\n'
+                  'Each DOT is colored by that game\'s value, using the same cutoffs as the Full Game Log:\n'
+                  '${statColorGuide(perfStat)}',
+            ),
+            child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(title,
@@ -148,7 +161,9 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
                     // for games that don't fit — never crop the graph.
                     : LayoutBuilder(builder: (context, constraints) {
                         const perPoint = 76.0;
-                        final pointsWidth = log.length * perPoint;
+                        // (games + the two padding slots) * width per slot, plus the
+                        // left axis column — so every dot keeps its full spacing.
+                        final pointsWidth = (log.length - 1 + 2 * xPad) * perPoint + 40;
                         final chartWidth =
                             pointsWidth > constraints.maxWidth ? pointsWidth : constraints.maxWidth;
                         return SingleChildScrollView(
@@ -158,8 +173,14 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
                             height: 240,
                             child: LineChart(
                               LineChartData(
-                          minX: 0,
-                          maxX: maxIndex < 0 ? 1 : maxIndex,
+                          // One whole game-slot of empty room on each side. With
+                          // minX = 0 / maxX = lastIndex the first and last dots sat
+                          // exactly ON the clip boundary (clipData below), so
+                          // half of each circle was cut off. Whole-number padding
+                          // keeps the ticks on integer game indexes (labels stay
+                          // pinned to their dots) and the dot size is unchanged.
+                          minX: -xPad,
+                          maxX: (maxIndex < 0 ? 0 : maxIndex) + xPad,
                           minY: minY,
                           maxY: maxY,
                           // Clip anything (dots, stroke, touch overlay) to the
@@ -198,6 +219,7 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
                                 return LineTooltipItem(
                                   '$label${s.y.toStringAsFixed(2)}',
                                   const TextStyle(
+                                    fontFamily: AppFonts.family,
                                     color: Colors.white,
                                     fontWeight: FontWeight.w700,
                                     fontSize: 11,
@@ -258,6 +280,7 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
               ),
             ],
           ),
+          ),
         ),
       );
     }
@@ -298,7 +321,7 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
         const SizedBox(height: 8),
         chartsSection,
         const SizedBox(height: 14),
-        Card(
+        GlowCard(
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -307,45 +330,20 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
                 const Text('Full Game Log', style: TextStyle(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 2),
                 const Text(
-                  'Each row is one game. Hold/hover a column header for the full stat name.',
-                  style: TextStyle(fontSize: 11, color: AppColors.colMuted),
+                  'Each card is one game. Press and hold any stat for what it means and, when it is colored, what the color means.',
+                  style: TextStyle(fontSize: 11, color: AppColors.colMuted, fontStyle: FontStyle.italic),
                 ),
                 const SizedBox(height: 8),
-                const _GameLogColumnLegend(),
-                const SizedBox(height: 8),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Table(
-                    border: TableBorder.all(color: AppColors.colBorder),
-                    defaultColumnWidth: const IntrinsicColumnWidth(),
-                    children: [
-                      TableRow(
-                        decoration: const BoxDecoration(color: AppColors.ink),
-                        children: [
-                          for (final entry in _gameLogColumns)
-                            _HCell(entry.short, tooltip: entry.full),
-                        ],
-                      ),
-                      for (final row in log)
-                        TableRow(children: [
-                          _Cell('${row['opponent']}'),
-                          _Cell('${row['gameNumber']}'),
-                          _Cell('${row['ip']}'),
-                          _Cell('${row['er']}'),
-                          _CellColored(row['era'] != null ? (row['era'] as double).toStringAsFixed(2) : '—',
-                              perfHex('ERA', row['era'] as double?)),
-                          _CellColored(row['whip'] != null ? (row['whip'] as double).toStringAsFixed(3) : '—',
-                              perfHex('WHIP', row['whip'] as double?)),
-                          _Cell('${row['pa']}'),
-                          _Cell('${row['h']}'),
-                          _Cell('${row['bb']}'),
-                          _Cell('${row['k']}'),
-                          _CellColored(row['kPct'] != null ? '${row['kPct']}%' : '—',
-                              perfHex('K_pct', row['kPct'] as double?)),
-                          _CellColored(row['bbPct'] != null ? '${row['bbPct']}%' : '—',
-                              perfHex('BB_pct', row['bbPct'] as double?)),
-                        ]),
-                    ],
+                for (final row in log) _GameLogCard(row: row),
+                const SizedBox(height: 2),
+                Theme(
+                  data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                  child: const ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    childrenPadding: EdgeInsets.zero,
+                    title: Text('What do these abbreviations mean?',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                    children: [_GameLogColumnLegend()],
                   ),
                 ),
               ],
@@ -356,7 +354,7 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
           if (!session.isPlus) return const SizedBox.shrink();
           final cd = StatsService.countApproach(data);
           final gcs = StatsService.groupedCountStats(data);
-          return Card(
+          return GlowCard(
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
@@ -365,10 +363,11 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
                   const Text('Count & Approach Snapshot', style: TextStyle(fontWeight: FontWeight.w800)),
                   const SizedBox(height: 4),
                   const Text('How counts played out across these games — see the Count & Approach tab for full detail.',
-                      style: TextStyle(fontSize: 11, color: AppColors.colMuted)),
+                      style: TextStyle(fontSize: 11, color: AppColors.colMuted, fontStyle: FontStyle.italic)),
                   const SizedBox(height: 4),
                   PerfStatBar(
                     label: 'F-Strike%',
+                    description: 'First-pitch strike percentage: plate appearances that started with a strike ÷ all plate appearances.',
                     value: cd['fpsPct'] != null ? '${cd['fpsPct']}%' : 'N/A',
                     color: perfHex('f_strike', cd['fpsPct'] as double?),
                     scaleHint: statScaleHint('f_strike'),
@@ -377,6 +376,7 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
                   ),
                   PerfStatBar(
                     label: 'Ahead OBP',
+                    description: 'On-base percentage allowed when the pitcher was ahead in the count.',
                     value: cd['aheadOBP'] != null ? (cd['aheadOBP'] as double).toStringAsFixed(3) : 'N/A',
                     color: perfHex('OBP_allowed', cd['aheadOBP'] as double?),
                     scaleHint: statScaleHint('OBP_allowed'),
@@ -385,6 +385,7 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
                   ),
                   PerfStatBar(
                     label: 'Behind OBP',
+                    description: 'On-base percentage allowed when the pitcher was behind in the count.',
                     value: cd['behindOBP'] != null ? (cd['behindOBP'] as double).toStringAsFixed(3) : 'N/A',
                     color: perfHex('OBP_allowed', cd['behindOBP'] as double?),
                     scaleHint: statScaleHint('OBP_allowed'),
@@ -393,6 +394,8 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
                   ),
                   PerfStatBar(
                     label: 'Two-Strike Count %',
+                    description: 'Share of plate appearances that reached a two-strike count.',
+                    colorNote: 'This bar is graded on the same cutoffs as First-Pitch Strike % (F-Strike%).',
                     value: gcs['twoStrikePct'] != null ? '${gcs['twoStrikePct']}%' : 'N/A',
                     color: perfHex('f_strike', gcs['twoStrikePct'] as double?),
                     scaleHint: statScaleHint('f_strike'),
@@ -401,6 +404,8 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
                   ),
                   PerfStatBar(
                     label: 'Hitter\'s Count %',
+                    description: 'Share of plate appearances that reached a hitter\'s count (a count favoring the batter).',
+                    colorNote: 'This bar is graded on the same cutoffs as Walk % (BB%), so a larger hitter\'s-count share trends toward orange/red.',
                     value: gcs['hittersCountPct'] != null ? '${gcs['hittersCountPct']}%' : 'N/A',
                     color: perfHex('BB_pct', gcs['hittersCountPct'] as double?),
                     scaleHint: statScaleHint('BB_pct'),
@@ -426,18 +431,35 @@ class _ColumnLabel {
 /// Full-name definitions for every abbreviated column in the Full Game Log
 /// table, used both for header tooltips and the legend beneath the title.
 const List<_ColumnLabel> _gameLogColumns = [
-  _ColumnLabel('Opponent', 'Opponent — the opposing team'),
-  _ColumnLabel('Game', 'Game # — this game\'s number vs. that opponent'),
   _ColumnLabel('IP', 'Innings Pitched'),
+  _ColumnLabel('PIT', 'Pitches thrown'),
+  _ColumnLabel('PA', 'Plate Appearances faced'),
+  _ColumnLabel('AB', 'At-Bats against'),
+  _ColumnLabel('H', 'Hits allowed'),
+  _ColumnLabel('2B / 3B / HR', 'Doubles, triples and home runs allowed'),
+  _ColumnLabel('BB', 'Walks (Bases on Balls) allowed'),
+  _ColumnLabel('HBP', 'Batters hit by a pitch'),
+  _ColumnLabel('K', 'Strikeouts'),
   _ColumnLabel('ER', 'Earned Runs allowed'),
+  _ColumnLabel('PO', 'Pickoff / caught-stealing / throw-out outs'),
   _ColumnLabel('ERA', 'Earned Run Average (ER × 9 / IP)'),
   _ColumnLabel('WHIP', 'Walks + Hits per Inning Pitched'),
-  _ColumnLabel('PA', 'Plate Appearances faced'),
-  _ColumnLabel('H', 'Hits allowed'),
-  _ColumnLabel('BB', 'Walks (Bases on Balls) allowed'),
-  _ColumnLabel('K', 'Strikeouts'),
+  _ColumnLabel('AVG', 'Batting average against (H / AB)'),
+  _ColumnLabel('OBP', 'On-base percentage against ((H + BB + HBP) / PA)'),
+  _ColumnLabel('SLG', 'Slugging percentage against (total bases / AB)'),
   _ColumnLabel('K%', 'Strikeout Percentage — K ÷ PA'),
   _ColumnLabel('BB%', 'Walk Percentage — BB ÷ PA'),
+  _ColumnLabel('K-BB%', 'Strikeout % minus Walk %'),
+  _ColumnLabel('P/PA', 'Pitches per Plate Appearance'),
+  _ColumnLabel('F-Str%', 'First-Pitch Strike Percentage'),
+  _ColumnLabel('Str%', 'Strike % — strikes ÷ all pitches'),
+  _ColumnLabel('Ball%', 'Ball % — balls ÷ all pitches'),
+  _ColumnLabel('Whiff%', 'Swinging misses ÷ swings'),
+  _ColumnLabel('Swing%', 'Swings ÷ all pitches'),
+  _ColumnLabel('Foul%', 'Foul balls ÷ swings'),
+  _ColumnLabel('InPlay%', 'Balls put in play ÷ all pitches'),
+  _ColumnLabel('Cont%', 'Contact % — (fouls + balls in play) ÷ swings'),
+  _ColumnLabel('GB% / FB% / LD%', 'Share of balls in play that were ground balls / fly balls / line drives'),
 ];
 
 /// A compact, always-visible key for what each Full Game Log column means —
@@ -476,42 +498,137 @@ class _GameLogColumnLegend extends StatelessWidget {
   }
 }
 
-class _HCell extends StatelessWidget {
-  final String text;
-  final String? tooltip;
-  const _HCell(this.text, {this.tooltip});
+/// One game in the Full Game Log: a header plus every stat that applies to the
+/// game, laid out as a wrapping grid of small tiles so the stats use the full
+/// available width (many per line on wide screens, fewer on phones) instead of
+/// stacking vertically. Stats without data for the game are left out.
+class _GameLogCard extends StatelessWidget {
+  final Map<String, dynamic> row;
+  const _GameLogCard({required this.row});
+
+  static String _f(Object? v, int d) => v == null ? '' : (v as num).toStringAsFixed(d);
+
   @override
   Widget build(BuildContext context) {
-    final cell = Padding(
-      padding: const EdgeInsets.all(8),
-      child: Text(text, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12)),
-    );
-    return tooltip == null ? cell : Tooltip(message: tooltip!, child: cell);
-  }
-}
+    double? n(String k) => (row[k] as num?)?.toDouble();
 
-class _Cell extends StatelessWidget {
-  final String text;
-  const _Cell(this.text);
-  @override
-  Widget build(BuildContext context) =>
-      Padding(padding: const EdgeInsets.all(8), child: Text(text, style: const TextStyle(fontSize: 12)));
-}
-
-class _CellColored extends StatelessWidget {
-  final String text;
-  final Color color;
-  const _CellColored(this.text, this.color);
-  @override
-  Widget build(BuildContext context) => Container(
-        color: color,
-        padding: const EdgeInsets.all(8),
-        child: Text(text,
-            style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: (color == AppColors.perfExcellent || color == AppColors.perfPoor || color == AppColors.perfBelowAvg)
-                    ? Colors.white
-                    : AppColors.colText)),
+    Widget? plain(String label, String? text, String what) {
+      if (text == null || text.isEmpty) return null;
+      return SizedBox(
+        width: 68,
+        child: StatVBox(compact: true, label: label, value: text, description: what),
       );
+    }
+
+    Widget? graded(String label, double? v, String text, String key, String what, {String? note}) {
+      if (v == null) return null;
+      final bg = perfHex(key, v);
+      final dark = bg == AppColors.perfExcellent || bg == AppColors.perfPoor || bg == AppColors.perfBelowAvg;
+      return SizedBox(
+        width: 68,
+        child: StatVBox(
+          compact: true,
+          label: label,
+          value: text,
+          background: bg,
+          textColor: dark ? Colors.white : AppColors.colText,
+          description: what,
+          statKey: key,
+          colorNote: note,
+        ),
+      );
+    }
+
+    Widget? related(String label, double? v, Color bg, String guide, String what) {
+      if (v == null) return null;
+      final dark = bg == AppColors.perfExcellent || bg == AppColors.perfPoor || bg == AppColors.perfBelowAvg;
+      return SizedBox(
+        width: 68,
+        child: StatVBox(
+          compact: true,
+          label: label,
+          value: '$v%',
+          background: bg,
+          textColor: dark ? Colors.white : AppColors.colText,
+          description: what,
+          colorGuide: guide,
+        ),
+      );
+    }
+
+    final swing = n('swingPct');
+    final foul = n('foulPct');
+    final inPlay = n('inPlayPct');
+    final tiles = <Widget?>[
+      plain('IP', '${row['ip']}', 'Innings pitched in this game.'),
+      plain('PIT', '${row['pitches']}', 'Pitches thrown in this game.'),
+      plain('PA', '${row['pa']}', 'Plate appearances faced.'),
+      plain('AB', '${row['ab']}', 'At-bats against (plate appearances minus walks and hit-by-pitches).'),
+      plain('H', '${row['h']}', 'Hits allowed.'),
+      plain('2B', '${row['doubles']}', 'Doubles allowed.'),
+      plain('3B', '${row['triples']}', 'Triples allowed.'),
+      plain('HR', '${row['hr']}', 'Home runs allowed.'),
+      plain('BB', '${row['bb']}', 'Walks allowed.'),
+      if ((row['hbp'] as int? ?? 0) > 0) plain('HBP', '${row['hbp']}', 'Batters hit by a pitch.'),
+      plain('K', '${row['k']}', 'Strikeouts.'),
+      plain('ER', '${row['er']}', 'Earned runs allowed.'),
+      if ((row['po'] as int? ?? 0) > 0)
+        plain('PO', '${row['po']}', 'Outs on pickoffs, caught stealing and throw-outs.'),
+      graded('ERA', n('era'), _f(row['era'], 2), 'ERA', 'Earned Run Average for this game: earned runs × 9 ÷ innings pitched.'),
+      graded('WHIP', n('whip'), _f(row['whip'], 3), 'WHIP', 'Walks + hits per inning pitched in this game.'),
+      graded('AVG', n('avg'), _f(row['avg'], 3), 'AVG', 'Batting average against: hits ÷ at-bats.'),
+      graded('OBP', n('obp'), _f(row['obp'], 3), 'OBP_allowed',
+          'On-base percentage against: (hits + walks + hit-by-pitches) ÷ plate appearances.'),
+      graded('SLG', n('slg'), _f(row['slg'], 3), 'SLG', 'Slugging percentage against: total bases ÷ at-bats.'),
+      graded('K%', n('kPct'), row['kPct'] == null ? '' : '${row['kPct']}%', 'K_pct',
+          'Strikeout percentage: strikeouts ÷ plate appearances.'),
+      graded('BB%', n('bbPct'), row['bbPct'] == null ? '' : '${row['bbPct']}%', 'BB_pct',
+          'Walk percentage: walks ÷ plate appearances.'),
+      graded('K-BB%', n('kbb'), row['kbb'] == null ? '' : '${row['kbb']}%', 'kbb_pct',
+          'Strikeout percentage minus walk percentage.'),
+      graded('P/PA', n('ppa'), _f(row['ppa'], 2), 'PPA', 'Pitches thrown per plate appearance.'),
+      graded('F-Str%', n('fStrikePct'), row['fStrikePct'] == null ? '' : '${row['fStrikePct']}%', 'f_strike',
+          'First-pitch strike percentage: plate appearances that started with a strike ÷ all plate appearances.'),
+      graded('Str%', n('strikePct'), row['strikePct'] == null ? '' : '${row['strikePct']}%', 'f_strike',
+          'Strike percentage: strikes (called, swinging, foul, in play) ÷ all pitches.',
+          note: 'Strike % uses the same cutoffs as First-Pitch Strike % (F-Strike%).'),
+      graded('Ball%', n('ballPct'), row['ballPct'] == null ? '' : '${row['ballPct']}%', 'ball_pct',
+          'Ball percentage: balls ÷ all pitches.'),
+      graded('Whiff%', n('whiffPct'), row['whiffPct'] == null ? '' : '${row['whiffPct']}%', 'whiff_pct',
+          'Whiff percentage: swinging misses ÷ swings.'),
+      related('Swing%', swing, swingPctColor(swing, n('whiffPct')), swingPctColorGuide(),
+          'Swing percentage: swings ÷ all pitches.'),
+      related('Foul%', foul, foulPctColor(foul), foulPctColorGuide(), 'Foul percentage: foul balls ÷ swings.'),
+      related('InPlay%', inPlay, inPlayPctColor(inPlay, n('bipOutPct')), inPlayPctColorGuide(),
+          'In-play percentage: balls put in play ÷ all pitches.'),
+      if (row['contactPct'] != null)
+        plain('Cont%', '${row['contactPct']}%', 'Contact percentage: (foul balls + balls in play) ÷ swings.'),
+      graded('GB%', n('groundBallPct'), row['groundBallPct'] == null ? '' : '${row['groundBallPct']}%', 'gb_pct',
+          'Ground-ball percentage: ground balls ÷ balls in play with a known type.'),
+      graded('FB%', n('flyBallPct'), row['flyBallPct'] == null ? '' : '${row['flyBallPct']}%', 'fb_pct',
+          'Fly-ball percentage: fly balls ÷ balls in play with a known type.'),
+      graded('LD%', n('lineDrivePct'), row['lineDrivePct'] == null ? '' : '${row['lineDrivePct']}%', 'ld_pct',
+          'Line-drive percentage: line drives ÷ balls in play with a known type.'),
+    ].where((w) => w != null).toList();
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.colBorder, width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('vs ${row['opponent']}  ·  Game ${row['gameNumber']}',
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+          const SizedBox(height: 8),
+          Wrap(spacing: 6, runSpacing: 6, children: [for (final t in tiles) t!]),
+        ],
+      ),
+    );
+  }
 }

@@ -150,7 +150,7 @@ class BaseballFieldPainter extends CustomPainter {
 }
 
 /// The branded field background (assets/images/field_bg.png — an aerial
-/// diamond shot with the Pitching Analytics logo watermarked into the
+/// diamond shot with the SKOUTAR logo watermarked into the
 /// outfield grass) plus the [BaseballFieldPainter] on top of it. This is
 /// the one shared "spray chart surface" used everywhere hits/pitches get
 /// plotted onto a field, so every screen looks and behaves the same way.

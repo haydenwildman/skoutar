@@ -1,5 +1,5 @@
 name: pitching_analytics
-description: Baseball Pitching Analytics — Flutter port of the R Shiny application.
+description: SKOUTAR — baseball pitching analytics (Flutter port of the R Shiny application).
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -26,6 +26,19 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  fonts:
+    - family: Teko
+      fonts:
+        - asset: assets/fonts/Teko-Light.ttf
+          weight: 300
+        - asset: assets/fonts/Teko-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Teko-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Teko-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Teko-Bold.ttf
+          weight: 700
   assets:
     - assets/images/logo.png
     - assets/images/logo_watermark.png

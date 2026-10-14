@@ -1,5 +1,6 @@
 /// Subscription / permission tier — mirrors the R app's `tier` column
-/// ("basic", "plus") plus a dedicated "admin" tier for the admin panel.
+/// ("basic", "plus"); "admin" is kept so existing admin accounts still parse
+/// and keep Plus access.
 enum UserTier { basic, plus, admin }
 
 extension UserTierX on UserTier {
@@ -67,7 +68,6 @@ class AppUser {
         createdAt = createdAt ?? DateTime.now();
 
   bool get isPlus => tier == UserTier.plus || tier == UserTier.admin;
-  bool get isAdmin => tier == UserTier.admin;
   bool get isActive => status == SubStatus.active;
 
   /// Built from a joined `auth.users` (email) + `public.profiles`

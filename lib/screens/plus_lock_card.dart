@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import '../widgets/glow.dart';
 
 /// Port of the R app's Plus-tier lock banner shown on gated tabs.
 class PlusLockCard extends StatelessWidget {
@@ -17,6 +18,7 @@ class PlusLockCard extends StatelessWidget {
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(12),
+        boxShadow: AppGlow.shadows,
       ),
       child: Column(
         children: [

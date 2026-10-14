@@ -10,8 +10,8 @@ export 'package:supabase_flutter/supabase_flutter.dart';
 /// power on its own; every table it touches is locked down by Row
 /// Level Security policies (see supabase_schema.sql). Never put the
 /// service_role/secret key here or anywhere else in this app — that
-/// key bypasses RLS entirely and must only ever live inside the
-/// admin-users Edge Function, on Supabase's servers.
+/// key bypasses RLS entirely and must only ever live on Supabase's
+/// servers, never in this app.
 /// ══════════════════════════════════════════════════════════════
 const supabaseUrl = 'https://xuqrmsjiftjwlhoqekpi.supabase.co';
 const supabaseAnonKey =

@@ -2,8 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/app_session.dart';
 import '../theme/app_theme.dart';
+import '../widgets/glow.dart';
 import '../utils/responsive.dart';
 import '../widgets/baseball_field_painter.dart';
+import '../widgets/stat_hold_info.dart';
+import '../widgets/year_filter_dropdown.dart';
+import '../services/color_guides.dart';
 
 /// Port of the R app's "Edit At-Bats" tab: pick a ball-in-play row from a
 /// list, then tap the field to set/adjust its spray-chart landing spot.
@@ -20,6 +24,12 @@ class _EditAtBatsScreenState extends State<EditAtBatsScreen> {
   double? _pendingY;
   String _battedType = 'gb';
 
+  // Filters (same Team / Game # / Year set the Overview tab uses, plus Jersey #).
+  // They only change which at-bats are LISTED; no record is touched.
+  String _team = 'All';
+  String _gameNum = 'All';
+  String _jersey = 'All';
+
   static const bipOutcomes = {
     '1b', '2b', '3b', 'hr', 'go', 'fo', 'lo', 'dp', 'e', 'fc'
   };
@@ -27,17 +37,129 @@ class _EditAtBatsScreenState extends State<EditAtBatsScreen> {
   @override
   Widget build(BuildContext context) {
     final session = context.watch<AppSession>();
-    final candidates = <int>[];
+    // Every ball-in-play row (as an index into session.pitches, so saving an
+    // edit still targets the right record), narrowed step by step so each
+    // filter's choices come from the rows left by the filters before it.
+    final year = session.selectedYear;
+    final all = <int>[];
     for (int i = 0; i < session.pitches.length; i++) {
-      if (bipOutcomes.contains(session.pitches[i].outcome)) candidates.add(i);
+      final p = session.pitches[i];
+      if (bipOutcomes.contains(p.outcome) && (year == null || p.season == year)) all.add(i);
     }
+    final teams = ['All', ...{for (final i in all) session.pitches[i].game}];
+    final activeTeam = teams.contains(_team) ? _team : 'All';
+    final byTeam = all.where((i) => activeTeam == 'All' || session.pitches[i].game == activeTeam).toList();
+    final gameNums = ['All', ...{for (final i in byTeam) session.pitches[i].gameNumber.toString()}];
+    final activeGame = gameNums.contains(_gameNum) ? _gameNum : 'All';
+    final byGame = byTeam
+        .where((i) => activeGame == 'All' || session.pitches[i].gameNumber.toString() == activeGame)
+        .toList();
+    final jerseyNums = {
+      for (final i in byGame)
+        if (session.pitches[i].batterNumber != null) session.pitches[i].batterNumber!
+    }.toList()
+      ..sort();
+    final jerseys = ['All', ...jerseyNums.map((j) => '$j')];
+    final activeJersey = jerseys.contains(_jersey) ? _jersey : 'All';
+    final candidates = byGame
+        .where((i) => activeJersey == 'All' || '${session.pitches[i].batterNumber}' == activeJersey)
+        .toList();
 
+    final filterCard = GlowCard(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Text('Filter', style: TextStyle(fontWeight: FontWeight.w800)),
+              const SizedBox(width: 10),
+              Text('${candidates.length} of ${all.length} at-bats',
+                  style: const TextStyle(fontSize: 12, color: AppColors.colMuted)),
+            ]),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                SizedBox(
+                  width: 180,
+                  child: DropdownButtonFormField<String>(
+                    isExpanded: true,
+                    value: activeTeam,
+                    decoration: const InputDecoration(labelText: 'Team'),
+                    items: teams
+                        .map((t) => DropdownMenuItem(value: t, child: Text(t, overflow: TextOverflow.ellipsis)))
+                        .toList(),
+                    onChanged: (v) => setState(() {
+                      _team = v!;
+                      _gameNum = 'All';
+                      _jersey = 'All';
+                    }),
+                  ),
+                ),
+                SizedBox(
+                  width: 140,
+                  child: DropdownButtonFormField<String>(
+                    isExpanded: true,
+                    value: activeGame,
+                    decoration: const InputDecoration(labelText: 'Game #'),
+                    items: gameNums
+                        .map((g) => DropdownMenuItem(value: g, child: Text(g, overflow: TextOverflow.ellipsis)))
+                        .toList(),
+                    onChanged: (v) => setState(() {
+                      _gameNum = v!;
+                      _jersey = 'All';
+                    }),
+                  ),
+                ),
+                SizedBox(
+                  width: 150,
+                  child: DropdownButtonFormField<String>(
+                    isExpanded: true,
+                    value: activeJersey,
+                    decoration: const InputDecoration(labelText: 'Jersey #'),
+                    items: jerseys
+                        .map((j) => DropdownMenuItem(
+                            value: j, child: Text(j == 'All' ? 'All' : '#$j', overflow: TextOverflow.ellipsis)))
+                        .toList(),
+                    onChanged: (v) => setState(() => _jersey = v!),
+                  ),
+                ),
+                const YearFilterDropdown(),
+                if (activeTeam != 'All' || activeGame != 'All' || activeJersey != 'All')
+                  TextButton.icon(
+                    onPressed: () => setState(() {
+                      _team = 'All';
+                      _gameNum = 'All';
+                      _jersey = 'All';
+                    }),
+                    icon: const Icon(Icons.filter_alt_off_outlined, size: 16),
+                    label: const Text('Show all'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        filterCard,
+        _body(context, session, candidates),
+      ],
+    );
+  }
+
+  Widget _body(BuildContext context, AppSession session, List<int> candidates) {
     return ResponsiveRow(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
           flex: 5,
-          child: Card(
+          child: GlowCard(
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
@@ -51,7 +173,7 @@ class _EditAtBatsScreenState extends State<EditAtBatsScreen> {
                         .toDouble(),
                     child: candidates.isEmpty
                         ? const Center(
-                            child: Text('No balls-in-play logged yet.', style: TextStyle(color: Colors.grey)))
+                            child: Text('No balls-in-play match these filters.', style: TextStyle(color: Colors.grey)))
                         : ListView.builder(
                             itemCount: candidates.length,
                             itemBuilder: (context, idx) {
@@ -101,7 +223,17 @@ class _EditAtBatsScreenState extends State<EditAtBatsScreen> {
                                           ],
                                         ),
                                       ),
-                                      Icon(
+                                      StatHoldInfo(
+                                        title: 'Spray location',
+                                        description: composeHoldInfo(
+                                          what: 'Shows whether a spray chart location was recorded for this at-bat.',
+                                          colorGuide: [
+                                            swatchLine(AppColors.perfExcellent, 'Green check: a spray location is saved.'),
+                                            swatchLine(AppColors.colMuted, 'Gray minus: no spray location saved.'),
+                                            'A status marker, not a graded stat, so there are no cutoffs.',
+                                          ].join('\n'),
+                                        ),
+                                        child: Icon(
                                         hasSpray
                                             ? Icons.check_circle_outline
                                             : Icons.remove_circle_outline,
@@ -109,6 +241,7 @@ class _EditAtBatsScreenState extends State<EditAtBatsScreen> {
                                         color: hasSpray
                                             ? AppColors.perfExcellent
                                             : AppColors.colMuted,
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -125,7 +258,7 @@ class _EditAtBatsScreenState extends State<EditAtBatsScreen> {
         const SizedBox(width: 8),
         Expanded(
           flex: 7,
-          child: Card(
+          child: GlowCard(
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(

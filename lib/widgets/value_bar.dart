@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
-/// A horizontal bar whose filled portion shows [text] inside it.
+/// A horizontal bar whose filled portion is EXACTLY [fraction] of the track
+/// (so 25% fills a quarter and 100% fills it all) and which shows [text].
 ///
-/// The fill is never allowed to be narrower than its own label: a small value
-/// (e.g. 3% on a 300px track) used to produce a ~9px fill with the label
-/// spilling out of it. The fill now grows to at least the width the label
-/// needs (capped at the track), and a zero / empty fill shows the label on
-/// the track instead so it is always readable and never leaves its box.
+/// When the fill is wide enough the label sits inside it. When it is too
+/// narrow to hold the label (a small value on a short track) the fill keeps
+/// its true length and the label is drawn just past the end of the fill, on
+/// the track — the label never spills out of the bar and the bar length is
+/// never distorted to make room for it.
 class ValueBar extends StatelessWidget {
   /// 0..1 share of the track to fill.
   final double fraction;
@@ -42,15 +43,10 @@ class ValueBar extends StatelessWidget {
       child: LayoutBuilder(builder: (context, constraints) {
         final track = constraints.maxWidth;
         final frac = fraction.isNaN ? 0.0 : fraction.clamp(0.0, 1.0);
-        // Rough label width: bold digits/letters ≈ 0.62em, plus side padding.
+        // Rough label width: bold digits/letters ~0.62em, plus side padding.
         final need = text.length * fontSize * 0.62 + 20;
-        final double fill;
-        if (frac <= 0) {
-          fill = 0;
-        } else {
-          final wanted = track * frac;
-          fill = (wanted < need ? need : wanted).clamp(0.0, track);
-        }
+        final fill = (track * frac).clamp(0.0, track).toDouble();
+        final labelInside = fill >= need;
         return Stack(
           children: [
             Container(
@@ -61,7 +57,7 @@ class ValueBar extends StatelessWidget {
             ),
             if (fill > 0)
               SizedBox(
-                width: fill,
+                width: fill < 3 ? 3 : fill,
                 height: height,
                 child: Container(
                   alignment: Alignment.centerRight,
@@ -70,28 +66,30 @@ class ValueBar extends StatelessWidget {
                     color: color,
                     borderRadius: BorderRadius.circular(radius),
                   ),
+                  child: labelInside
+                      ? Text(
+                          text,
+                          maxLines: 1,
+                          softWrap: false,
+                          textAlign: TextAlign.right,
+                          style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w900, color: textColor),
+                        )
+                      : null,
+                ),
+              ),
+            if (!labelInside)
+              Positioned(
+                left: fill + 6,
+                right: 4,
+                top: 0,
+                bottom: 0,
+                child: Align(
+                  alignment: Alignment.centerLeft,
                   child: Text(
                     text,
                     maxLines: 1,
-                    softWrap: false,
-                    overflow: TextOverflow.fade,
-                    textAlign: TextAlign.right,
-                    style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w900, color: textColor),
-                  ),
-                ),
-              )
-            else
-              Positioned.fill(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      text,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w800, color: AppColors.colMuted),
-                    ),
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w900, color: AppColors.colText),
                   ),
                 ),
               ),

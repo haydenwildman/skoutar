@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:collection/collection.dart';
 import '../models/pitch_event.dart';
 import '../theme/app_theme.dart';
+import 'sequence_scoring.dart';
 
 /// ══════════════════════════════════════════════════════════════
 /// STATS SERVICE
@@ -209,8 +210,98 @@ Color perfHex(String stat, double? value) {
   }
 }
 
-/// Control points used to turn a raw stat value into a continuous 0..1
-/// "how good is this" position for [statProgressFraction]. Six numbers per
+// ── Relationship-based colors for the Pitch Breakdown grid ──────────────
+// Swing %, Take %, Foul % and In Play % aren't good or bad on their own: they
+// depend on what happened on those swings / takes / balls in play. These
+// helpers grade the *result* with the app's existing five-tier palette and
+// only let a high rate reach green (or red) when the rate itself is high;
+// a low rate is pulled toward the neutral middle tier because it says little.
+
+const List<Color> _tierPalette = [
+  AppColors.perfPoor,
+  AppColors.perfBelowAvg,
+  AppColors.perfAverage,
+  AppColors.perfGood,
+  AppColors.perfExcellent,
+];
+
+const Color _noDataColor = Color(0xFFE5E7EB);
+
+/// Tier 0 (poor) .. 4 (excellent): how many of the four ascending [cuts]
+/// [v] reaches.
+int _ladderTier(double v, List<double> cuts) => cuts.where((c) => v >= c).length;
+
+/// 0..1 weight: 0 at/below [lo], 1 at/above [hi].
+double _rateWeight(double v, double lo, double hi) => ((v - lo) / (hi - lo)).clamp(0.0, 1.0).toDouble();
+
+/// Moves [tier] toward the middle tier by (1 - [weight]).
+Color _tierColorWeighted(int tier, double weight) =>
+    _tierPalette[(2 + (tier - 2) * weight).round().clamp(0, 4)];
+
+// Cut points / ramps used by the relationship colors below. They are the exact
+// numbers the color functions already used inline; they live here so the
+// tap-and-hold color guides read the same values the colors are built from.
+const double swingRampLow = 25, swingRampHigh = 50;
+const List<double> takeStrikeCuts = [25, 35, 45, 55];
+const double takeRampLow = 30, takeRampHigh = 60;
+const List<double> foulCuts = [20, 28, 35]; // yellow / orange / red start
+const List<double> bipOutCuts = [58, 65, 70, 75];
+const double inPlayRampLow = 10, inPlayRampHigh = 22;
+
+/// Tier index (0 = red .. 4 = dark green) of a perf-palette color, or -1.
+int perfTierIndexOf(Color c) => _tierPalette.indexOf(c);
+
+/// Lowest rate on the [lo]..[hi] ramp at which a box whose graded stat sits in
+/// [tier] (0-4) already shows tier [target]; null if it never does. Uses the
+/// same blending function as the colors themselves.
+double? rampRateToReach(int tier, int target, double lo, double hi) {
+  for (var i = 0; i <= 100; i++) {
+    final w = i / 100;
+    if (_tierPalette.indexOf(_tierColorWeighted(tier, w)) == target) {
+      return lo + (hi - lo) * w;
+    }
+  }
+  return null;
+}
+
+/// Swing %: judged by Whiff %. High Swing % + high Whiff % = green; high
+/// Swing % + low Whiff % = orange/red; a low Swing % stays near neutral.
+Color swingPctColor(double? swingPct, double? whiffPct) {
+  if (swingPct == null || whiffPct == null) return _noDataColor;
+  final whiffTier = _tierPalette.indexOf(perfHex('whiff_pct', whiffPct));
+  return _tierColorWeighted(whiffTier, _rateWeight(swingPct, swingRampLow, swingRampHigh));
+}
+
+/// Take %: judged by how many of the takes were strikes. High Take % made of
+/// called strikes = green; high Take % made of balls = orange/red; a low
+/// Take % stays near neutral.
+Color takePctColor(double? takePct, double? takeStrikePct) {
+  if (takePct == null || takeStrikePct == null) return _noDataColor;
+  final tier = _ladderTier(takeStrikePct, takeStrikeCuts);
+  return _tierColorWeighted(tier, _rateWeight(takePct, takeRampLow, takeRampHigh));
+}
+
+/// Foul %: high = red (contact without putting it in play), easing off
+/// through orange and yellow to no color at all as the rate drops.
+Color foulPctColor(double? foulPct) {
+  if (foulPct == null) return _noDataColor;
+  if (foulPct >= foulCuts[2]) return AppColors.perfPoor;
+  if (foulPct >= foulCuts[1]) return AppColors.perfBelowAvg;
+  if (foulPct >= foulCuts[0]) return AppColors.perfAverage;
+  return AppColors.tint;
+}
+
+/// In Play %: judged by the out rate on those balls in play. High In Play %
+/// with mostly outs = green; high In Play % with lots of hits = orange/red;
+/// a low In Play % stays near neutral.
+Color inPlayPctColor(double? inPlayPct, double? bipOutPct) {
+  if (inPlayPct == null || bipOutPct == null) return _noDataColor;
+  final tier = _ladderTier(bipOutPct, bipOutCuts);
+  return _tierColorWeighted(tier, _rateWeight(inPlayPct, inPlayRampLow, inPlayRampHigh));
+}
+
+/// Control points describing each stat's tier cut-offs (used for the bar's
+/// colored bands and to infer its direction). Six numbers per
 /// stat: point 0 = a worst-practical value (bottom of the Poor tier),
 /// points 1-4 = the exact same tier cutoffs used in [perfHex] (the
 /// Poor/BelowAvg, BelowAvg/Average, Average/Good and Good/Excellent
@@ -250,39 +341,93 @@ const Map<String, List<double>> _statProgressBounds = {
   'batter_BABIP': [0.450, 0.360, 0.320, 0.290, 0.260, 0.150],
 };
 
-/// Continuous 0..1 "quality" position for [value] on [stat]'s scale.
-/// Used to size [PerfStatBar] fills so two values that share a color tier
-/// (say two "Good" ERAs of 3.6 and 2.1) still render different lengths
-/// based on where each actually falls, while preserving the same overall
-/// 5-band ordering the tier colors already convey (Poor bars still land
-/// shorter than Excellent bars on average). Falls back to a full bar for
-/// stats with no defined scale (plain counts like PA/IP).
-double statProgressFraction(String? stat, double? value) {
-  if (stat == null || value == null || value.isNaN) return 1.0;
-  final bounds = _statProgressBounds[stat];
-  if (bounds == null) return 1.0;
-  final increasing = bounds.last > bounds.first;
-  if (increasing) {
-    if (value <= bounds.first) return 0.04;
-    if (value >= bounds.last) return 1.0;
-  } else {
-    if (value >= bounds.first) return 0.04;
-    if (value <= bounds.last) return 1.0;
-  }
-  for (int i = 0; i < bounds.length - 1; i++) {
-    final lo = bounds[i];
-    final hi = bounds[i + 1];
-    final inSeg = increasing ? (value >= lo && value <= hi) : (value <= lo && value >= hi);
-    if (inSeg) {
-      final segFrac = hi == lo ? 0.0 : (value - lo) / (hi - lo);
-      final frac = (i + segFrac) / (bounds.length - 1);
-      if (frac < 0.04) return 0.04;
-      if (frac > 1.0) return 1.0;
-      return frac;
-    }
-  }
-  return 1.0;
+/// The "natural" full scale of each graded stat's progress bar: the bar runs
+/// from 0 to this value. True percentages always use 0-100 (a 35% stat fills
+/// 35% of the bar no matter what the current maximum happens to be); rate
+/// stats use a practical ceiling (ERA 10.00+, WHIP 2.50, AVG .500 ...).
+const Map<String, double> _statScaleMax = {
+  'ERA': 10.0,
+  'WHIP': 2.5,
+  'K_pct': 100,
+  'BB_pct': 100,
+  'whiff_pct': 100,
+  'f_strike': 100,
+  'kbb_pct': 100,
+  'AVG': 0.500,
+  'OBP_allowed': 0.600,
+  'SLG': 1.000,
+  'PPA': 6.0,
+  'usage_predictability': 100,
+  'seq_score': 100,
+  'ball_pct': 100,
+  'chase_pct': 100,
+  'contact_pct': 100,
+  'gb_pct': 100,
+  'fb_pct': 100,
+  'ld_pct': 100,
+  'batter_AVG': 0.500,
+  'batter_OBP': 0.600,
+  'batter_SLG': 1.000,
+  'batter_OPS': 1.500,
+  'batter_BB_pct': 100,
+  'batter_K_pct': 100,
+  'batter_BABIP': 0.500,
+};
+
+/// True when a LOWER value is better for [stat] (ERA, WHIP, BB%, AVG against,
+/// ...). Derived from the same tier table [perfHex] is built on, so the
+/// direction can never disagree with the colors: the control points count
+/// down for lower-is-better stats and up for higher-is-better ones.
+bool statLowerIsBetter(String? stat) {
+  final bounds = stat == null ? null : _statProgressBounds[stat];
+  if (bounds == null) return false;
+  return bounds.first > bounds.last;
 }
+
+/// Where [value] sits on [stat]'s natural 0..1 scale (value / scale max,
+/// clamped). This is the *actual value's* position — it never changes with
+/// whether the stat is good or bad; the tier colors behind the marker carry
+/// that meaning. Returns null for stats with no scale or a missing value.
+double? statValueFraction(String? stat, double? value) {
+  if (stat == null || value == null || value.isNaN) return null;
+  final max = _statScaleMax[stat];
+  if (max == null || max <= 0) return null;
+  return (value / max).clamp(0.0, 1.0).toDouble();
+}
+
+/// The five tier colors for [stat] ordered LEFT -> RIGHT along its bar.
+/// Lower-is-better: green on the left, red on the right.
+/// Higher-is-better: red on the left, green on the right.
+List<Color> statTierColorsLeftToRight(String stat) {
+  const best = [
+    AppColors.perfExcellent,
+    AppColors.perfGood,
+    AppColors.perfAverage,
+    AppColors.perfBelowAvg,
+    AppColors.perfPoor,
+  ];
+  return statLowerIsBetter(stat) ? best : best.reversed.toList();
+}
+
+/// The four tier cut-offs as ascending 0..1 positions along the bar (the
+/// exact same cut-offs [perfHex] uses), so the colored bands behind the
+/// marker line up with the tier the value is actually graded in.
+List<double> statTierCutoffFractions(String stat) {
+  final bounds = _statProgressBounds[stat];
+  final max = _statScaleMax[stat];
+  if (bounds == null || max == null || max <= 0) return const [0.2, 0.4, 0.6, 0.8];
+  final cuts = [for (var i = 1; i <= 4; i++) (bounds[i] / max).clamp(0.0, 1.0).toDouble()]..sort();
+  return cuts;
+}
+
+/// The six control points for [stat] (see [_statProgressBounds]); null if none.
+List<double>? statTierBounds(String stat) => _statProgressBounds[stat];
+
+/// The natural full-scale maximum of [stat]'s progress bar; null if none.
+double? statScaleMaxFor(String stat) => _statScaleMax[stat];
+
+/// Whether [stat] has a progress-bar scale (all graded stats do).
+bool statHasScale(String? stat) => stat != null && _statScaleMax.containsKey(stat);
 
 /// Short "what good/bad looks like" hint for a perf-tier [stat], shown
 /// under each [PerfStatBar] so a raw value can be judged against a
@@ -399,6 +544,24 @@ class StatsService {
   /// Filters out pickoff/throwout rows -> pure pitch events.
   static List<PitchEvent> pitchesOnly(List<PitchEvent> data) =>
       data.where((e) => e.eventType == 'pitch').toList();
+
+  /// Real pitches only: pitch rows minus dead-ball ('dk' = no pitch thrown)
+  /// rows. Used by the per-pitch-type / per-count / per-sequence analyses so a
+  /// no-pitch event can never inflate a pitch bucket.
+  static List<PitchEvent> _livePitches(List<PitchEvent> data) =>
+      pitchesOnly(data).where((e) => e.call != 'dk').toList();
+
+  /// Completed plate appearances, excluding dead-ball ('dk') endings, which
+  /// are not an at-bat result for any pitch type.
+  static List<PAResult> _finalPAsLive(List<PitchEvent> data) =>
+      finalPAs(data).where((r) => r.event.outcome != 'dk').toList();
+
+  /// The bucket a pitch belongs to: its pitch type, lower-cased so 'FB' and
+  /// 'fb' can never split into two buckets; a missing type is 'other'.
+  static String _bucketKey(PitchEvent e) {
+    final t = (e.pitchType ?? '').toLowerCase().trim();
+    return t.isEmpty ? 'other' : t;
+  }
 
   /// Pickoff / caught-stealing / throw-out rows (each is worth 1 out),
   /// mirrors `po_rows`. 'to' is the legacy Caught Stealing event type;
@@ -543,6 +706,15 @@ class StatsService {
     final foulPct = swings > 0 ? _round(fouls / swings * 100, 1) : null;
     final contactPct = swings > 0 ? _round(contact / swings * 100, 1) : null;
 
+    // Supporting rates for the relationship-based Swing/Take/In Play colors
+    // (display only — none of the existing stats above are affected).
+    final takeStrikes = list.where((e) => e.call == 'sl').length;
+    final bipResults = list
+        .where((e) => e.call == 'ip' && e.outcome != null && e.outcome!.isNotEmpty)
+        .toList();
+    final bipOuts =
+        bipResults.where((e) => PitchEvent.ballInPlayOutOutcomes.contains(e.outcome)).length;
+
     final finAB = finList.fold<int>(0, (s, r) => s + r.ab);
     final finH = finList.fold<int>(0, (s, r) => s + r.hit);
     final avg = finAB > 0 ? _round(finH / finAB, 3) : null;
@@ -571,18 +743,24 @@ class StatsService {
       'lineDrivePct': bbTotal > 0 ? _round(ld / bbTotal * 100, 1) : null,
       'popupPct': bbTotal > 0 ? _round(pu / bbTotal * 100, 1) : null,
       'avgAgainst': avg,
+      // Share of takes that were called strikes (vs balls) / share of balls
+      // in play that were outs. Null with no takes / no balls in play.
+      'takeStrikePct': takes > 0 ? _round(takeStrikes / takes * 100, 1) : null,
+      'bipOutPct': bipResults.isNotEmpty ? _round(bipOuts / bipResults.length * 100, 1) : null,
       'kPct': finPA > 0 ? _round(finK / finPA * 100, 1) : null,
       'bbPct': finPA > 0 ? _round(finBB / finPA * 100, 1) : null,
     };
   }
 
   static List<Map<String, dynamic>> pitchBreakdown(List<PitchEvent> data) {
-    final pitches = pitchesOnly(data);
+    final pitches = _livePitches(data);
     if (pitches.isEmpty) return [];
-    final byType = groupBy(pitches, (PitchEvent e) => e.pitchType ?? 'other');
-    final finals = finalPAs(data);
-    final finalsByType =
-        groupBy(finals, (PAResult r) => r.event.pitchType ?? 'other');
+    // Each pitch goes into exactly one bucket: its own pitch type. A plate
+    // appearance's result (hit, K, BB) goes to the bucket of the pitch that
+    // ENDED it, never to the other pitches thrown earlier in the at-bat.
+    final byType = groupBy(pitches, _bucketKey);
+    final finals = _finalPAsLive(data);
+    final finalsByType = groupBy(finals, (PAResult r) => _bucketKey(r.event));
     final totalPitches = pitches.length;
 
     return byType.entries.map((entry) {
@@ -598,9 +776,9 @@ class StatsService {
   /// Same shape as one [pitchBreakdown] row, but combined across every
   /// pitch type — used for the Stats Per Pitch table's "Overall" row.
   static Map<String, dynamic>? pitchBreakdownOverall(List<PitchEvent> data) {
-    final pitches = pitchesOnly(data);
+    final pitches = _livePitches(data);
     if (pitches.isEmpty) return null;
-    final finals = finalPAs(data);
+    final finals = _finalPAsLive(data);
     return _pitchBreakdownRow('Overall', pitches, finals, pitches.length);
   }
 
@@ -744,8 +922,14 @@ class StatsService {
   /// Pitch-usage heat map by count — port of the R app's
   /// `count_heatmap_ui`, extended (per item 11) with Strike% and BAA
   /// alongside Usage% for each (count, pitch type) cell.
+  ///
+  /// BAA per cell uses ONLY the pitch thrown in that count: an at-bat's hit or
+  /// out is credited to the single pitch that ended it (the count it was
+  /// thrown at and its pitch type), never to the earlier pitches of the same
+  /// at-bat. A cell shows BAA once at least one at-bat ended on that pitch at
+  /// that count; with none it stays null (blank), not 0.
   static Map<String, dynamic> countHeatmap(List<PitchEvent> data) {
-    final pitches = pitchesOnly(data);
+    final pitches = _livePitches(data);
     final byPA = groupBy(
       pitches,
       (PitchEvent e) => '${e.game}|${e.gameNumber}|${e.batter}|${e.batterNumber}|${e.paId}',
@@ -756,26 +940,40 @@ class StatsService {
     final cellStrikes = <String, int>{};
     final cellAB = <String, int>{};
     final cellHits = <String, int>{};
+    final countAB = <String, int>{};
+    final countHits = <String, int>{};
     final countTotals = <String, int>{};
     final pitchTypesSeen = <String>{};
 
     for (final entry in byPA.entries) {
       final list = entry.value..sort((a, b) => (a.pitchNum ?? 0).compareTo(b.pitchNum ?? 0));
+      // The pitch that ENDED this at-bat: the last pitch carrying a result
+      // (same rule finalPAs uses). Only this one pitch may add to AB/hits, so a
+      // plate appearance can never be counted twice, and an unfinished one
+      // (no result yet) adds nothing.
+      PitchEvent? finalPitch;
+      for (final p in list) {
+        if (p.isFinalPitchOfPA) finalPitch = p;
+      }
       int ballsBefore = 0, strikesBefore = 0;
       for (final p in list) {
         final countStr = '$ballsBefore-$strikesBefore';
-        final pt = p.pitchType ?? 'other';
+        final pt = _bucketKey(p);
         pitchTypesSeen.add(pt);
         final cellKey = '$countStr|$pt';
         cellN[cellKey] = (cellN[cellKey] ?? 0) + 1;
         countTotals[countStr] = (countTotals[countStr] ?? 0) + 1;
         final isStrike = {'ss', 'sl', 'f', 'ip'}.contains(p.call);
         if (isStrike) cellStrikes[cellKey] = (cellStrikes[cellKey] ?? 0) + 1;
-        if (p.isFinalPitchOfPA) {
+        if (identical(p, finalPitch)) {
+          // Official at-bat = every result except a walk or hit-by-pitch
+          // (strikeouts, outs in play, errors and hits all count).
           final ab = (p.outcome == 'bb' || p.outcome == 'hbp') ? 0 : 1;
           final hit = PitchEvent.hitOutcomes.contains(p.outcome) ? 1 : 0;
           cellAB[cellKey] = (cellAB[cellKey] ?? 0) + ab;
           cellHits[cellKey] = (cellHits[cellKey] ?? 0) + hit;
+          countAB[countStr] = (countAB[countStr] ?? 0) + ab;
+          countHits[countStr] = (countHits[countStr] ?? 0) + hit;
         }
         if (p.call == 'b') {
           ballsBefore++;
@@ -807,16 +1005,31 @@ class StatsService {
           'totalAtCount': tot,
           'usagePct': tot > 0 ? _round(n / tot * 100, 0) : null,
           'strikePct': _round(strikes / n * 100, 0),
-          'baa': ab >= 2 ? _round(hits / ab, 3) : null,
+          'baa': ab >= 1 ? _round(hits / ab, 3) : null,
+          'ab': ab,
+          'hits': hits,
         };
       }
     }
+
+    // BAA for each count with every pitch type combined: hits ÷ official
+    // at-bats whose FINAL pitch was thrown at that count. Null (blank) when no
+    // at-bat ended at that count.
+    final countBaa = <String, Map<String, dynamic>>{
+      for (final c in allCounts)
+        c: {
+          'ab': countAB[c] ?? 0,
+          'hits': countHits[c] ?? 0,
+          'baa': (countAB[c] ?? 0) >= 1 ? _round((countHits[c] ?? 0) / countAB[c]!, 3) : null,
+        },
+    };
 
     return {
       'counts': allCounts,
       'pitchTypes': pitchTypes,
       'countTotals': countTotals,
       'cells': cells,
+      'countBaa': countBaa,
     };
   }
 
@@ -846,7 +1059,39 @@ class StatsService {
       final bb = finals.fold<int>(0, (s, r) => s + r.bb);
       final k = finals.fold<int>(0, (s, r) => s + r.k);
       final whip = ip > 0 ? _round((h + bb) / ip, 3) : null;
+      // Everything else reuses the shared per-game calculations (overview +
+      // the all-pitches breakdown row) so these numbers can never disagree
+      // with the Overview / Pitch Breakdown tabs.
+      final ov = overview(gameData);
+      final pb = pitchBreakdownOverall(gameData);
+      final hbpN = finals.fold<int>(0, (s, r) => s + r.hbp);
+      final abN = finals.fold<int>(0, (s, r) => s + r.ab);
+      int outcomeCount(String o) => finals.where((r) => r.event.outcome == o).length;
       rows.add({
+        'pitches': pb == null ? 0 : pb['n'],
+        'ab': abN,
+        'doubles': outcomeCount('2b'),
+        'triples': outcomeCount('3b'),
+        'hr': outcomeCount('hr'),
+        'hbp': hbpN,
+        'po': pickoffRows(gameData).length,
+        'obp': pa > 0 ? _round((h + bb + hbpN) / pa, 3) : null,
+        'avg': ov.avg,
+        'slg': ov.slg,
+        'ppa': ov.ppa,
+        'kbb': ov.kbb,
+        'whiffPct': ov.whiffPct,
+        'fStrikePct': ov.fStrikePct,
+        'strikePct': pb?['strikePct'],
+        'ballPct': pb?['ballPct'],
+        'swingPct': pb?['swingPct'],
+        'foulPct': pb?['foulPct'],
+        'inPlayPct': pb?['inPlayPct'],
+        'contactPct': pb?['contactPct'],
+        'bipOutPct': pb?['bipOutPct'],
+        'groundBallPct': pb?['groundBallPct'],
+        'flyBallPct': pb?['flyBallPct'],
+        'lineDrivePct': pb?['lineDrivePct'],
         'opponent': opponent,
         'gameNumber': gnum,
         'ip': '${totalOuts ~/ 3}.${totalOuts % 3}',
@@ -878,132 +1123,158 @@ class StatsService {
   };
   static String _tierFor(String pt) => _speedTier[pt] ?? 'offspeed';
 
-  /// Intelligent 3-pitch sequence analysis — replaces a simple "count the
-  /// combinations" approach with a scoring model that reflects real
-  /// sequencing strategy. For every 3-pitch sequence thrown, this computes
-  /// a 0-100 `score` from five baseball-logic factors:
+  /// Opening-sequence analysis. A "sequence" is the FIRST THREE pitch types of
+  /// a completed plate appearance that lasted at least three pitches (e.g.
+  /// FB→CV→CV). Unfinished plate appearances and dead-ball rows are ignored.
   ///
-  ///  1. Results (50%): the actual Out% and K% this sequence produced —
-  ///     the ground truth of whether it got hitters out.
-  ///  2. Weak contact (15%): of the balls actually put in play behind this
-  ///     sequence, what % were ground balls or popups (weak contact) vs.
-  ///     line drives/fly balls (better contact for the hitter).
-  ///  3. Speed/shape variety (up to +15): sequences that change tempo
-  ///     between consecutive pitches (fast → breaking → off-speed, etc.)
-  ///     disrupt timing more than throwing the same shape three times.
-  ///  4. Predictability penalty (up to -20): throwing the identical pitch
-  ///     three times in a row is heavily penalized — even if it worked in a
-  ///     small sample, it's a pattern a hitter can exploit once he sees it.
-  ///     Two-in-a-row repeats get a smaller penalty.
-  ///  5. Sample-size discount: sequences seen fewer than 3 times get their
-  ///     result-based score pulled toward a neutral 50 so a lucky 1-for-1
-  ///     doesn't rank as an all-time great (or worst) sequence.
-  static List<Map<String, dynamic>> pitchSequencing(List<PitchEvent> data) {
-    final pitches = pitchesOnly(data);
-    final byPA = groupBy(
-      pitches,
-      (PitchEvent e) => '${e.game}|${e.gameNumber}|${e.batter}|${e.batterNumber}|${e.paId}',
-    );
-    final finals = finalPAs(data);
-    final finalByKey = {
-      for (final r in finals)
-        '${r.event.game}|${r.event.gameNumber}|${r.event.batter}|${r.event.batterNumber}|${r.event.paId}':
-            r
-    };
+  /// SCORE (0-100) — the average of the new per-plate-appearance decision
+  /// score (see `sequence_scoring.dart` for the full formula, rules and the
+  /// 30/25/20/10/15 component weights) over every plate appearance that
+  /// opened this way. It is NOT a function of results alone: count
+  /// management, the batter's own history with each pitch, how each pitch
+  /// follows the previous response, and predictability are all evaluated, and
+  /// the result is only 15 of 100 points. Missing data is dropped and the
+  /// remaining weights re-normalised, never counted as bad.
+  ///
+  /// Descriptive fields kept for the scouting report / cards:
+  ///  - outPct / kPct: share of those PAs ending in an out / strikeout.
+  ///  - strikePct: share of the sequence's own 3 pitches that were strikes.
+  ///  - weakContactPct: of those ending on a ball in play with a known
+  ///    batted-ball type, the share that were ground balls.
+  ///  - speedChanges / uniqueTypes / repeatAll3: shape facts (descriptive
+  ///    only — they no longer add or subtract points by themselves).
+  ///
+  /// `history`: pass the FULL (year-filtered) pitch list when `data` is a
+  /// team/game subset so the batter-matchup history can see earlier games.
+  /// `lowSample` is true when n < 3.
+  static List<Map<String, dynamic>> pitchSequencing(
+    List<PitchEvent> data, {
+    List<PitchEvent>? history,
+  }) {
+    final shown = {for (final e in data) e.id};
+    final scored = SequenceScoring.scoreAll(history ?? data)
+        .where((s) => shown.contains(s.pitches.first.id))
+        .toList();
+    const notOuts = {'1b', '2b', '3b', 'hr', 'bb', 'hbp', 'e'};
+    const strikeCalls = {'ss', 'sl', 'f', 'ip'};
 
-    final seqCounts = <String, Map<String, int>>{};
-    for (final entry in byPA.entries) {
-      final list = entry.value..sort((a, b) => (a.pitchNum ?? 0).compareTo(b.pitchNum ?? 0));
-      if (list.length < 3) continue;
-      final first3 = list.take(3).toList();
-      final seq = first3.map((e) => (e.pitchType ?? '?').toUpperCase()).join('→');
-      final res = finalByKey[entry.key];
-      final isOut = res != null &&
-          !{'1b', '2b', '3b', 'hr', 'bb', 'hbp', 'e'}.contains(res.event.outcome);
-      final isK = res != null && res.k == 1;
+    final bySeq = <String, List<PaScore>>{};
+    for (final s in scored) {
+      if (!s.completed || s.pitches.length < 3 || !s.hasScore) continue;
+      bySeq.putIfAbsent(s.openingSequence, () => []).add(s);
+    }
 
-      // Weak-contact tracking: only meaningful when the PA's final pitch
-      // was put in play and we know the batted-ball type.
-      String? weakness;
-      if (res != null && res.event.call == 'ip' && res.event.battedType != null) {
-        weakness = {'gb', 'pu'}.contains(res.event.battedType) ? 'weak' : 'hard';
+    final result = <Map<String, dynamic>>[];
+    for (final entry in bySeq.entries) {
+      final list = entry.value;
+      final n = list.length;
+      var outs = 0, ks = 0, weak = 0, hard = 0, strikes = 0;
+      for (final s in list) {
+        final last = s.pitches.last;
+        if (!notOuts.contains(last.outcome)) outs++;
+        if (PitchEvent.kOutcomes.contains(last.outcome)) ks++;
+        if (last.call == 'ip' && last.battedType != null) {
+          if ({'gb', 'pu'}.contains(last.battedType)) {
+            weak++;
+          } else {
+            hard++;
+          }
+        }
+        strikes += s.pitches.take(3).where((e) => strikeCalls.contains(e.call)).length;
       }
-
-      seqCounts.putIfAbsent(seq, () => {
-            'count': 0, 'outs': 0, 'k': 0, 'weak': 0, 'hard': 0,
-            'speedChanges': 0, 'uniqueTypes': 0, 'repeatAll3': 0,
-          });
-      final m = seqCounts[seq]!;
-      m['count'] = m['count']! + 1;
-      if (isOut) m['outs'] = m['outs']! + 1;
-      if (isK) m['k'] = m['k']! + 1;
-      if (weakness == 'weak') m['weak'] = m['weak']! + 1;
-      if (weakness == 'hard') m['hard'] = m['hard']! + 1;
-
-      // Sequence-shape metrics (same every time for a given `seq` string,
-      // so only need to compute once — but cheap enough to just overwrite).
-      final types = first3.map((e) => (e.pitchType ?? 'other').toLowerCase()).toList();
+      final types = list.first.pitches.take(3).map(_bucketKey).toList();
       final tiers = types.map(_tierFor).toList();
-      int speedChanges = 0;
-      for (int i = 1; i < tiers.length; i++) {
+      var speedChanges = 0;
+      for (var i = 1; i < tiers.length; i++) {
         if (tiers[i] != tiers[i - 1]) speedChanges++;
       }
       final uniqueTypes = types.toSet().length;
-      final repeatAll3 = types.toSet().length == 1;
-      m['speedChanges'] = speedChanges;
-      m['uniqueTypes'] = uniqueTypes;
-      m['repeatAll3'] = repeatAll3 ? 1 : 0;
-    }
-
-    final result = seqCounts.entries.map((e) {
-      final m = e.value;
-      final count = m['count']!;
-      final outs = m['outs']!;
-      final k = m['k']!;
-      final weak = m['weak']!;
-      final hard = m['hard']!;
       final bip = weak + hard;
-      final outPct = _round(outs / count * 100, 0);
-      final kPct = _round(k / count * 100, 0);
-      final weakContactPct = bip > 0 ? _round(weak / bip * 100, 0) : null;
-      final speedChanges = m['speedChanges']!;
-      final uniqueTypes = m['uniqueTypes']!;
-      final repeatAll3 = m['repeatAll3']! == 1;
 
-      // --- Scoring model (baseball logic, see doc comment above) ---
-      // Sample-size discount: blend toward a neutral 50 for small samples
-      // so single-PA "sequences" don't dominate the best/worst lists.
-      final double sampleWeight = (count / (count + 2)).clamp(0.0, 1.0).toDouble();
-      final resultScore = (outPct * 0.6 + kPct * 0.4);
-      final blendedResult = 50 + (resultScore - 50) * sampleWeight;
-
-      double score = blendedResult * 0.65;
-      if (weakContactPct != null) score += weakContactPct * 0.15;
-      score += speedChanges * 6.0; // up to +12 for 2 shape changes
-      score += (uniqueTypes - 1) * 4.0; // up to +8 for 3 unique pitches
-      if (repeatAll3) {
-        score -= 20; // same pitch 3x — highly exploitable once scouted
-      } else if (uniqueTypes == 2 && speedChanges == 1) {
-        score -= 4; // one repeat back-to-back — mild predictability ding
+      // Mean PA score; component averages count a not-evaluated component as
+      // 0 earned / 0 available so that Σ avgEarned == mean score exactly.
+      final meanScore = list.fold<double>(0, (a, s) => a + s.score!) / n;
+      final comps = <String, Map<String, dynamic>>{};
+      for (final k in SeqWeights.keys) {
+        var earned = 0.0, avail = 0.0, valSum = 0.0;
+        var evalN = 0;
+        var anyLimited = false;
+        for (final s in list) {
+          final c = s.components[k]!;
+          if (c.evaluated) {
+            earned += c.earned!;
+            avail += c.maxPoints!;
+            valSum += c.value!;
+            evalN++;
+            if (c.limitedConfidence) anyLimited = true;
+          }
+        }
+        comps[k] = {
+          'label': SeqWeights.labels[k],
+          'nominal': SeqWeights.byKey[k],
+          'avgEarned': earned / n,
+          'avgMax': avail / n,
+          'avgValue': evalN > 0 ? valSum / evalN : null,
+          'evaluatedPAs': evalN,
+          'limited': anyLimited,
+        };
       }
-      score = score.clamp(0.0, 100.0).toDouble();
 
-      return {
-        'seq': e.key,
-        'count': count,
-        'outPct': outPct,
-        'kPct': kPct,
-        'weakContactPct': weakContactPct,
+      // Reasons grouped by code, most frequent first; the text shown is the
+      // first one recorded (it is generated from real calculations).
+      final grouped = <String, Map<String, dynamic>>{};
+      for (final s in list) {
+        final seenCodes = <String>{};
+        for (final note in s.notes) {
+          final g = grouped.putIfAbsent(note.code, () => {
+                'polarity': note.polarity,
+                'component': note.component,
+                'text': note.text,
+                'count': 0,
+              });
+          if (seenCodes.add(note.code)) g['count'] = (g['count'] as int) + 1;
+        }
+      }
+      final reasons = grouped.values.toList()
+        ..sort((a, b) => (b['count'] as int).compareTo(a['count'] as int));
+
+      final reduced = list.where((s) => s.reducedConfidence).length;
+      result.add({
+        'seq': entry.key,
+        'count': n,
+        'outPct': _round(outs / n * 100, 0),
+        'kPct': _round(ks / n * 100, 0),
+        'strikePct': _round(strikes / (n * 3) * 100, 0),
+        'weakContactPct': bip > 0 ? _round(weak / bip * 100, 0) : null,
         'speedChanges': speedChanges,
         'uniqueTypes': uniqueTypes,
-        'repeatAll3': repeatAll3,
-        'score': _round(score, 1),
-      };
-    }).toList()
-      ..sort((a, b) => (b['score'] as double).compareTo(a['score'] as double));
+        'repeatAll3': uniqueTypes == 1,
+        'lowSample': n < 3,
+        'score': _round(meanScore, 1),
+        'components': comps,
+        'reasons': reasons,
+        'reducedConfidencePAs': reduced,
+        'paScores': list,
+      });
+    }
+    result.sort((a, b) => (b['score'] as double).compareTo(a['score'] as double));
     return result;
   }
 
+  /// Every plate appearance's explainable sequencing score, newest first,
+  /// for the at-bat review list. [history] is the full pitch list used for
+  /// batter history; [data] is what is shown (e.g. a team/game filter).
+  static List<PaScore> sequencingByAtBat(
+    List<PitchEvent> data, {
+    List<PitchEvent>? history,
+  }) {
+    final shown = {for (final e in data) e.id};
+    return SequenceScoring.scoreAll(history ?? data)
+        .where((s) => shown.contains(s.pitches.first.id))
+        .toList()
+        .reversed
+        .toList();
+  }
 
   /// Put-away pitch: distribution of final pitch type on strikeouts.
   static List<Map<String, dynamic>> putAwayPitch(List<PitchEvent> data) {

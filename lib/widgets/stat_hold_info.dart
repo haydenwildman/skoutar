@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
+import 'glow.dart';
 
 /// Wraps a stat so that PRESSING AND HOLDING it shows the stat's
 /// explanation, and releasing dismisses it. Replaces the old "i" buttons.
@@ -107,6 +108,72 @@ class _StatInfoPopup extends StatelessWidget {
     required this.description,
   });
 
+  static final RegExp _swatch = RegExp(r'^\{c:([0-9A-Fa-f]{8})\}\s?(.*)$');
+  // Explanatory/supporting copy: Teko italic (the popup sits in an Overlay,
+  // so the family is set explicitly rather than relying on inheritance).
+  static const TextStyle _bodyStyle = TextStyle(
+    fontFamily: AppFonts.family,
+    fontStyle: FontStyle.italic,
+    fontSize: 13,
+    height: 1.35,
+    color: AppColors.colText,
+  );
+
+  /// Renders the description line by line: `## Heading`, `{c:AARRGGBB} text`
+  /// (color swatch + text) and plain text. A description with none of these
+  /// markers renders exactly as plain text, as before.
+  static List<Widget> _body(String description) {
+    final out = <Widget>[];
+    for (final line in description.split('\n')) {
+      if (line.trim().isEmpty) {
+        out.add(const SizedBox(height: 5));
+        continue;
+      }
+      final m = _swatch.firstMatch(line);
+      if (m != null) {
+        final color = Color(int.parse(m.group(1)!, radix: 16));
+        out.add(Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(3),
+                    border: Border.all(color: Colors.black26, width: 0.8),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 7),
+              Expanded(child: Text(m.group(2)!, style: _bodyStyle)),
+            ],
+          ),
+        ));
+      } else if (line.startsWith('## ')) {
+        out.add(Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text(
+            line.substring(3),
+            style: const TextStyle(
+              fontFamily: AppFonts.family,
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: AppColors.brandOrangeDeep,
+            ),
+          ),
+        ));
+      } else {
+        out.add(Text(line, style: _bodyStyle));
+      }
+    }
+    return out;
+  }
+
   static const double _margin = 12;
   static const double _gap = 8;
   static const double _maxWidth = 320;
@@ -130,20 +197,14 @@ class _StatInfoPopup extends StatelessWidget {
           child: ConstrainedBox(
             constraints: BoxConstraints(
               maxWidth: width,
-              maxHeight: (media.size.height - safe.top - safe.bottom) * 0.5,
+              maxHeight: (media.size.height - safe.top - safe.bottom) * 0.85,
             ),
             child: DecoratedBox(
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: AppColors.brandOrangeDeep.withOpacity(0.5)),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x33000000),
-                    blurRadius: 14,
-                    offset: Offset(0, 4),
-                  ),
-                ],
+                boxShadow: AppGlow.shadows,
               ),
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
@@ -156,20 +217,14 @@ class _StatInfoPopup extends StatelessWidget {
                       Text(
                         title,
                         style: const TextStyle(
+                          fontFamily: AppFonts.family,
                           fontSize: 14,
                           fontWeight: FontWeight.w800,
                           color: AppColors.ink,
                         ),
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        description,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          height: 1.35,
-                          color: AppColors.colText,
-                        ),
-                      ),
+                      ..._body(description),
                     ],
                   ),
                 ),

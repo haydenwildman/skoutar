@@ -1,7 +1,10 @@
+import '../widgets/orange_glow_button.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/app_session.dart';
 import '../theme/app_theme.dart';
+import '../widgets/glow.dart';
+import '../widgets/skoutar_logo.dart';
 import '../utils/responsive.dart';
 import 'signup_screen.dart';
 import 'home_shell.dart';
@@ -67,25 +70,13 @@ class _LoginScreenState extends State<LoginScreen> {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.35),
-                  blurRadius: 40,
-                  offset: const Offset(0, 12),
-                ),
-              ],
+              boxShadow: AppGlow.shadowsRaised,
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Image.asset('assets/images/logo.png', height: 64, fit: BoxFit.contain, filterQuality: FilterQuality.high),
+                SkoutarLogo(height: 100),
                 const SizedBox(height: 8),
-                const Text('Pitching Analytics',
-                    style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
-                        color: AppColors.ink)),
-                const SizedBox(height: 4),
                 const Text('Sign in to your account',
                     style: TextStyle(color: Colors.grey, fontSize: 13)),
                 const SizedBox(height: 20),
@@ -121,14 +112,14 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 16),
                 SizedBox(
                   width: double.infinity,
-                  child: ElevatedButton(
+                  child: OrangeGlowButton(
                     onPressed: _loading ? null : _doLogin,
                     child: _loading
                         ? const SizedBox(
                             height: 18,
                             width: 18,
                             child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white))
+                                strokeWidth: 2, color: AppColors.brandOrangeDeep))
                         : const Text('Sign In →'),
                   ),
                 ),

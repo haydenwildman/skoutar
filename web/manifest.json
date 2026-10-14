@@ -1,11 +1,11 @@
 {
-    "name": "pitching_analytics",
-    "short_name": "pitching_analytics",
+    "name": "SKOUTAR",
+    "short_name": "SKOUTAR",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#26201C",
     "theme_color": "#ED652A",
-    "description": "A new Flutter project.",
+    "description": "SKOUTAR - baseball pitching analytics.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

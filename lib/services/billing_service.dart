@@ -34,7 +34,7 @@ import '../models/user.dart';
 /// ══════════════════════════════════════════════════════════════
 
 /// Centralized pricing — change these two numbers and every screen
-/// that displays a price (signup, admin panel notes, etc.) should
+/// that displays a price (signup, etc.) should
 /// read from here instead of hardcoding strings.
 class PricingConfig {
   static const double basicMonthlyPriceUsd = 4.99;

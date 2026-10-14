@@ -19,11 +19,8 @@ class AuthResult {
 /// app-level "username" is a separate display field stored on the
 /// profile row, unchanged elsewhere in the app.
 ///
-/// Admin operations that need to create a user or set/reset a
-/// password go through the `admin-users` Edge Function instead of
-/// happening here directly — those require the service-role key,
-/// which must never be embedded in this (public, static-hosted) app.
-/// See admin-users_index.ts.
+/// Anything that would need the service-role key must never happen in this
+/// (public, static-hosted) app — that key is never embedded here.
 /// ══════════════════════════════════════════════════════════════
 class AuthService {
   /// Builds an [AppUser] from the current Supabase session + a fetched
@@ -124,61 +121,10 @@ class AuthService {
     }
   }
 
-  // ── ADMIN OPERATIONS ─────────────────────────────────────
-  // create/resetPassword/delete call the admin-users Edge Function
-  // (needs the service-role key, so it can't happen client-side).
-  // update (tier/status) is a plain table write — RLS already allows
-  // this for admins, so it goes straight to Postgres.
-
-  /// profiles doesn't carry email (that lives in auth.users, which the
-  /// client can never query directly) — so the full list, emails
-  /// included, comes from the Edge Function's listUsers action, which
-  /// joins auth.users + profiles server-side using the service role.
-  Future<List<AppUser>> allUsers() async {
-    try {
-      final res = await sb.functions.invoke('admin-users', body: {'action': 'listUsers'});
-      final rows = (res.data as Map)['users'] as List;
-      return rows.map((r) {
-        final row = r as Map<String, dynamic>;
-        return AppUser.fromSupabase(
-          id: row['id'] as String,
-          email: row['email'] as String? ?? '',
-          profile: row,
-        );
-      }).toList();
-    } on FunctionException catch (e) {
-      throw Exception(_funcErrorMessage(e));
-    }
-  }
-
-  /// The Edge Function throws [FunctionException] on any non-2xx status
-  /// (it never returns a non-200 [FunctionResponse]) — pull a readable
-  /// message out of whatever shape the error body comes back as.
-  String _funcErrorMessage(FunctionException e) {
-    final d = e.details;
-    if (d is String && d.isNotEmpty) return d;
-    if (d is Map && d['error'] is String) return d['error'] as String;
-    return e.reasonPhrase ?? 'Request failed (${e.status}).';
-  }
-
-  Future<void> adminCreateUser({
-    required String username,
-    required String email,
-    required String password,
-    required UserTier tier,
-  }) async {
-    try {
-      await sb.functions.invoke('admin-users', body: {
-        'action': 'createUser',
-        'username': username.trim(),
-        'email': email.trim(),
-        'password': password,
-        'tier': tier.label,
-      });
-    } on FunctionException catch (e) {
-      throw Exception(_funcErrorMessage(e));
-    }
-  }
+  // ── USER TIER / STATUS ───────────────────────────────────────
+  // Plain table write — RLS decides who may do it. Kept for the billing
+  // integration (see BillingService), which syncs a subscriber's own
+  // tier/status here once a payment provider is wired up.
 
   Future<void> adminUpdateUser(
     String userId, {
@@ -190,28 +136,5 @@ class AuthService {
     if (status != null) patch['status'] = status.label;
     if (patch.isEmpty) return;
     await sb.from('profiles').update(patch).eq('id', userId);
-  }
-
-  Future<void> adminResetPassword(String userId, String newPassword) async {
-    try {
-      await sb.functions.invoke('admin-users', body: {
-        'action': 'resetPassword',
-        'userId': userId,
-        'newPassword': newPassword,
-      });
-    } on FunctionException catch (e) {
-      throw Exception(_funcErrorMessage(e));
-    }
-  }
-
-  Future<void> adminDeleteUser(String userId) async {
-    try {
-      await sb.functions.invoke('admin-users', body: {
-        'action': 'deleteUser',
-        'userId': userId,
-      });
-    } on FunctionException catch (e) {
-      throw Exception(_funcErrorMessage(e));
-    }
   }
 }

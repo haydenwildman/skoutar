@@ -56,7 +56,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
       await _refresh();
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('User created.')));
+            .showSnackBar(const SnackBar(content: Text('✅ User created.')));
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
@@ -101,7 +101,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     await context.read<AppSession>().auth.adminResetPassword(u.id, newPass);
     if (mounted) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Password reset.')));
+          .showSnackBar(const SnackBar(content: Text('✅ Password reset.')));
     }
   }
 
@@ -128,12 +128,12 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('User Management', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                const Text('👥 User Management', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
                 const SizedBox(height: 10),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: DataTable(
-                    headingRowColor: MaterialStateProperty.all(AppColors.ink),
+                    headingRowColor: WidgetStateProperty.all(AppColors.blueDark),
                     headingTextStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
                     columns: const [
                       DataColumn(label: Text('Username')),
@@ -151,7 +151,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                             value: u.tier,
                             underline: const SizedBox(),
                             items: UserTier.values
-                                .map((t) => DropdownMenuItem(value: t, child: Text(t.label, overflow: TextOverflow.ellipsis)))
+                                .map((t) => DropdownMenuItem(value: t, child: Text(t.label)))
                                 .toList(),
                             onChanged: (v) => v == null ? null : _changeTier(u, v),
                           )),
@@ -159,7 +159,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                             value: u.status,
                             underline: const SizedBox(),
                             items: SubStatus.values
-                                .map((s) => DropdownMenuItem(value: s, child: Text(s.label, overflow: TextOverflow.ellipsis)))
+                                .map((s) => DropdownMenuItem(value: s, child: Text(s.label)))
                                 .toList(),
                             onChanged: (v) => v == null ? null : _changeStatus(u, v),
                           )),
@@ -189,7 +189,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Create User', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                const Text('➕ Create User', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
                 const SizedBox(height: 10),
                 Wrap(
                   spacing: 10,
@@ -221,11 +221,10 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                     SizedBox(
                       width: 140,
                       child: DropdownButtonFormField<UserTier>(
-                        isExpanded: true,
-                        value: _newTier,
+                        initialValue: _newTier,
                         decoration: const InputDecoration(labelText: 'Tier'),
                         items: UserTier.values
-                            .map((t) => DropdownMenuItem(value: t, child: Text(t.label, overflow: TextOverflow.ellipsis)))
+                            .map((t) => DropdownMenuItem(value: t, child: Text(t.label)))
                             .toList(),
                         onChanged: (v) => setState(() => _newTier = v!),
                       ),
@@ -233,7 +232,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                     ElevatedButton(
                       onPressed: _createUser,
                       style: ElevatedButton.styleFrom(backgroundColor: AppColors.colSuccess),
-                      child: const Text('Create User'),
+                      child: const Text('➕ Create User'),
                     ),
                   ],
                 ),
