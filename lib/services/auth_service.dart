@@ -94,8 +94,25 @@ class AuthService {
       return AuthResult(success: true, user: user);
     } on AuthException catch (e) {
       return AuthResult(success: false, message: e.message);
+    } on PostgrestException catch (e) {
+      // The password was accepted but loading the account data failed (for
+      // example, no profile row exists yet). Say so instead of blaming the password.
+      try {
+        await sb.auth.signOut(scope: SignOutScope.local);
+      } catch (_) {}
+      return AuthResult(
+        success: false,
+        message: 'Your login worked, but your account data could not be loaded '
+            '(code ${e.code ?? 'unknown'}). Please contact support.',
+      );
     } catch (e) {
-      return AuthResult(success: false, message: 'Invalid email or password.');
+      try {
+        await sb.auth.signOut(scope: SignOutScope.local);
+      } catch (_) {}
+      return AuthResult(
+        success: false,
+        message: 'Could not log in. Check your connection and try again.',
+      );
     }
   }
 
