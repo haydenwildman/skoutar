@@ -18,6 +18,7 @@ dependencies:
   provider: ^6.1.2             # App-wide state management (AppSession)
   pdf: ^3.11.1                 # Builds the Scouting Report PDF export
   printing: ^5.13.4            # Cross-platform "share/download/print" of the generated PDF
+  url_launcher: ^6.3.0         # Opens the Terms of Service / Privacy Policy links
 
 dev_dependencies:
   flutter_test:

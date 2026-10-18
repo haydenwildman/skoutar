@@ -5,8 +5,7 @@ import 'skoutar_logo.dart';
 class NavItem {
   final IconData icon;
   final String label;
-  final bool requiresPlus;
-  const NavItem(this.icon, this.label, {this.requiresPlus = false});
+  const NavItem(this.icon, this.label);
 }
 
 /// Static nav structure — 1:1 with the R app's `tab_map` / sidebar links.
@@ -17,13 +16,15 @@ const List<NavItem> mainNavItems = [
   NavItem(Icons.edit_note_outlined, 'Game Input'),
   NavItem(Icons.bar_chart_outlined, 'Overview'),
   NavItem(Icons.donut_large_outlined, 'Pitch Breakdown'),
-  NavItem(Icons.psychology_outlined, 'Count & Approach', requiresPlus: true),
+  NavItem(Icons.psychology_outlined, 'Count & Approach'),
   NavItem(Icons.map_outlined, 'Spray Chart'),
   NavItem(Icons.receipt_long_outlined, 'Game Logs'),
-  NavItem(Icons.timeline_outlined, 'Pitch Sequencing', requiresPlus: true),
-  NavItem(Icons.visibility_outlined, 'Scouting Report', requiresPlus: true),
+  NavItem(Icons.timeline_outlined, 'Pitch Sequencing'),
+  NavItem(Icons.visibility_outlined, 'Scouting Report'),
   NavItem(Icons.table_chart_outlined, 'Edit Raw Data'),
   NavItem(Icons.edit_outlined, 'Edit At-Bats'),
+  NavItem(Icons.sports_baseball_outlined, 'Bullpen'),
+  NavItem(Icons.insights_outlined, 'Pitching Analysis'),
 ];
 
 class SidebarNav extends StatelessWidget {
@@ -32,6 +33,7 @@ class SidebarNav extends StatelessWidget {
   final bool isPlus;
   final String pitcherName;
   final VoidCallback onLogout;
+  final VoidCallback? onAccount; // opens the account dialog (optional)
 
   /// Whether the sidebar is showing its narrow, icon-only form. Purely a
   /// display concern — [onToggleCollapse] is what flips it, owned by the
@@ -47,6 +49,7 @@ class SidebarNav extends StatelessWidget {
     required this.isPlus,
     required this.pitcherName,
     required this.onLogout,
+    this.onAccount,
     this.collapsed = false,
     required this.onToggleCollapse,
   });
@@ -128,8 +131,10 @@ class SidebarNav extends StatelessWidget {
             ),
             if (collapsed)
               Tooltip(
-                message: pitcherName,
-                child: Container(
+                message: '$pitcherName (tap to switch pitcher)',
+                child: GestureDetector(
+                  onTap: onAccount,
+                  child: Container(
                   margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   padding: const EdgeInsets.symmetric(vertical: 6),
                   alignment: Alignment.center,
@@ -140,9 +145,12 @@ class SidebarNav extends StatelessWidget {
                   child: const Icon(Icons.sports_baseball_outlined,
                       color: Colors.white, size: 14),
                 ),
+                ),
               )
             else
-              Container(
+              GestureDetector(
+                onTap: onAccount,
+                child: Container(
                 margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
@@ -163,7 +171,12 @@ class SidebarNav extends StatelessWidget {
                             color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12),
                       ),
                     ),
+                    if (onAccount != null) ...[
+                      const SizedBox(width: 4),
+                      const Icon(Icons.arrow_drop_down, color: Colors.white70, size: 18),
+                    ],
                   ],
+                ),
                 ),
               ),
             const Divider(color: Colors.white24, height: 20),
@@ -187,6 +200,9 @@ class SidebarNav extends StatelessWidget {
                     _sectionLabel('DATA'),
                     _navTile(mainNavItems[8]),
                     _navTile(mainNavItems[9]),
+                    _sectionLabel('PITCHER DEVELOPMENT'),
+                    _navTile(mainNavItems[10]),
+                    _navTile(mainNavItems[11]),
                   ],
                 ),
               ),
@@ -219,7 +235,7 @@ class SidebarNav extends StatelessWidget {
   }
 
   Widget _navTile(NavItem item) {
-    final locked = item.requiresPlus && !isPlus;
+    const locked = false; // every plan includes every feature
     final active = selected == item.label;
     final tile = InkWell(
       onTap: locked ? null : () => onSelect(item.label),

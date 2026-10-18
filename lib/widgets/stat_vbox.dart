@@ -3,8 +3,9 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'tier_scale_bar.dart';
 import 'value_bar.dart';
-import '../services/stats_service.dart' show statHasScale;
+import '../services/stats_service.dart' show statHasScale, perfHex;
 import 'stat_hold_info.dart';
+import '../utils/responsive.dart' show Breakpoints;
 
 /// Port of the R app's `.stat-vbox` / `mk_vb()` helper: a colored box
 /// with a small uppercase label and a large bold value. If [description]
@@ -168,74 +169,203 @@ class PerfStatBar extends StatelessWidget {
     return description;
   }
 
-  /// Text sitting on top of [bg] needs to be readable against it — white on
-  /// the dark/saturated tier colors, dark text on the light ones.
-  static Color _onBarTextColor(Color bg) {
-    if (bg == AppColors.perfExcellent ||
-        bg == AppColors.perfPoor ||
-        bg == AppColors.perfBelowAvg ||
-        bg == AppColors.brandOrangeDeep) {
-      return Colors.white;
-    }
-    return AppColors.colText;
-  }
-
   @override
   Widget build(BuildContext context) {
     final graded = statHasScale(statKey);
     // Plain/unrated counts use the neutral tint fill - render the bar itself
     // in the stronger brand orange so it's visible against the track.
     final barColor = color == AppColors.tint ? AppColors.brandOrangeDeep : color;
-    final onBarColor = _onBarTextColor(barColor);
 
     return StatHoldInfo(
       title: label,
       description: _holdText(graded),
       child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  label.toUpperCase(),
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.3,
-                    color: AppColors.colMuted,
-                  ),
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header row: small stat name on the left, the ACTUAL value large
+            // and bold on the right.
+            StatHeaderRow(label: label, value: value),
+            const SizedBox(height: 6),
+            // Graded stat: tier-colored scale with a marker at the real value.
+            // Plain counts: neutral full bar (no text inside - the number
+            // lives in the header row).
+            if (graded)
+              TierScaleBar(statKey: statKey!, rawValue: rawValue, valueText: value)
+            else
+              ValueBar(
+                fraction: 1.0,
+                color: barColor,
+                text: '',
+                height: 12,
+                radius: 6,
+              ),
+            if (scaleHint != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                scaleHint!,
+                style: const TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.colMuted,
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: 5),
-          // Graded stat: tier-colored scale with a marker at the real value.
-          // Plain counts: neutral full bar.
-          if (graded)
-            TierScaleBar(statKey: statKey!, rawValue: rawValue, valueText: value)
-          else
-            ValueBar(
-              fraction: 1.0,
-              color: barColor,
-              text: value,
-              textColor: onBarColor,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Primary-number font size shared by every progress bar: 28px on desktop,
+/// stepping down on tablets and phones so the number stays prominent without
+/// overflowing. [compact] is for dense grids (e.g. the Game Input mini cells).
+double statValueFontSize(BuildContext context, {bool compact = false}) {
+  final w = MediaQuery.sizeOf(context).width;
+  if (compact) return w < Breakpoints.phone ? 16 : 18;
+  if (w < Breakpoints.phone) return 22;
+  if (w < Breakpoints.drawer) return 26;
+  return 28;
+}
+
+/// The standard header row above a progress bar:
+///
+///   STAT NAME                                   ACTUAL VALUE
+///
+/// The name is small and muted; the real statistic is large, bold, and
+/// high-contrast. The value scales down (never wraps or clips) if the row is
+/// narrow, and a long name ellipsizes instead of colliding with the value.
+class StatHeaderRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool compact;
+  const StatHeaderRow({super.key, required this.label, required this.value, this.compact = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasValue = value != 'N/A' && value.isNotEmpty;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: Text(
+            label.toUpperCase(),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: compact ? 12.5 : 15.5,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.3,
+              height: 1.15,
+              color: AppColors.ink,
+              decoration: TextDecoration.underline,
+              decorationThickness: 1.6,
             ),
-          if (scaleHint != null) ...[
-            const SizedBox(height: 3),
-            Text(
-              scaleHint!,
-              style: const TextStyle(
-                fontSize: 9.5,
-                fontWeight: FontWeight.w600,
-                color: AppColors.colMuted,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerRight,
+            child: Text(
+              value,
+              maxLines: 1,
+              softWrap: false,
+              style: TextStyle(
+                fontSize: statValueFontSize(context, compact: compact),
+                fontWeight: FontWeight.w900,
+                height: 1.1,
+                color: hasValue ? AppColors.ink : AppColors.colMuted,
               ),
             ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Compact summary card: small stat label, a large bold value, and a subtle
+/// performance strip along the bottom in the stat's existing tier color
+/// (graded with the same [perfHex] key as everywhere else). Press and hold
+/// shows the same "What This Means" + "Color Guide" as the other stats.
+class StatSummaryCard extends StatelessWidget {
+  final String label;
+  final String value;
+  final String statKey;
+  final double? rawValue;
+  final String? description;
+
+  const StatSummaryCard({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.statKey,
+    required this.rawValue,
+    this.description,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasValue = rawValue != null && value != 'N/A';
+    final tier = perfHex(statKey, rawValue);
+    final guide = statColorGuide(statKey);
+    return StatHoldInfo(
+      title: label,
+      description: guide.isEmpty ? description : composeHoldInfo(what: description, colorGuide: guide),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.tint,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.colBorder),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label.toUpperCase(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.3,
+                      color: AppColors.colMuted,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      value,
+                      maxLines: 1,
+                      softWrap: false,
+                      style: TextStyle(
+                        fontSize: statValueFontSize(context),
+                        fontWeight: FontWeight.w900,
+                        height: 1.15,
+                        color: hasValue ? AppColors.ink : AppColors.colMuted,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(height: 5, color: hasValue ? tier : AppColors.colBorder),
           ],
-        ],
-      ),
+        ),
       ),
     );
   }

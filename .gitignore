@@ -43,3 +43,25 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Secrets and private config - never commit these
+.env
+.env.*
+*.env
+secrets/
+*.pem
+*.p12
+*.jks
+*.keystore
+key.properties
+android/key.properties
+supabase/.env
+supabase/.temp/
+supabase/.branches/
+service_account*.json
+google-services.json
+GoogleService-Info.plist
+
+# Generated Flutter build files
+windows/flutter/ephemeral/
+build/

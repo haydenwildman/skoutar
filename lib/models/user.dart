@@ -56,6 +56,16 @@ class AppUser {
   String pitcherDisplayName;
   DateTime createdAt;
 
+  // Profile + subscription info (filled from `profiles` and the server-side
+  // get_my_entitlement() function; display only — the server decides access).
+  List<String> sports; // subset of ['baseball', 'softball']
+  String? throwsHand; // 'R' | 'L'
+  String? planId; // 'individual' | 'family' | 'team'
+  String? planName;
+  String? subscriptionStatus; // pending | trialing | active | ...
+  DateTime? trialEnd;
+  int maxPitchers; // how many pitcher profiles the plan allows
+
   AppUser({
     required this.id,
     required this.username,
@@ -64,10 +74,20 @@ class AppUser {
     this.status = SubStatus.active,
     String? pitcherDisplayName,
     DateTime? createdAt,
+    this.sports = const [],
+    this.throwsHand,
+    this.planId,
+    this.planName,
+    this.subscriptionStatus,
+    this.trialEnd,
+    this.maxPitchers = 1,
   })  : pitcherDisplayName = pitcherDisplayName ?? username,
         createdAt = createdAt ?? DateTime.now();
 
-  bool get isPlus => tier == UserTier.plus || tier == UserTier.admin;
+  /// Every plan includes every feature (plans differ only by how many pitcher
+  /// profiles they allow), so nothing in the app is locked any more. Kept as a
+  /// getter so older call sites keep compiling.
+  bool get isPlus => true;
   bool get isActive => status == SubStatus.active;
 
   /// Built from a joined `auth.users` (email) + `public.profiles`
@@ -76,15 +96,26 @@ class AppUser {
     required String id,
     required String email,
     required Map<String, dynamic> profile,
-  }) =>
-      AppUser(
-        id: id,
-        username: profile['username'] as String? ?? email.split('@').first,
-        email: email,
-        tier: UserTierX.fromString(profile['tier'] as String? ?? 'basic'),
-        status: SubStatusX.fromString(profile['status'] as String? ?? 'active'),
-        pitcherDisplayName:
-            profile['pitcher_display_name'] as String? ?? profile['username'] as String? ?? email,
-        createdAt: DateTime.tryParse(profile['created_at'] as String? ?? '') ?? DateTime.now(),
-      );
+    Map<String, dynamic>? entitlement,
+  }) {
+    // `tier` only matters for spotting admins now; features are not tiered.
+    final tier = UserTierX.fromString(profile['tier'] as String? ?? 'basic');
+    return AppUser(
+      id: id,
+      username: profile['username'] as String? ?? email.split('@').first,
+      email: email,
+      tier: tier,
+      status: SubStatusX.fromString(profile['status'] as String? ?? 'active'),
+      pitcherDisplayName:
+          profile['pitcher_display_name'] as String? ?? profile['username'] as String? ?? email,
+      createdAt: DateTime.tryParse(profile['created_at'] as String? ?? '') ?? DateTime.now(),
+      sports: ((profile['sports'] as List?) ?? const []).map((e) => e.toString()).toList(),
+      throwsHand: profile['throws_hand'] as String?,
+      planId: entitlement?['plan_id'] as String?,
+      planName: entitlement?['plan_name'] as String?,
+      subscriptionStatus: entitlement?['subscription_status'] as String?,
+      trialEnd: DateTime.tryParse(entitlement?['trial_end'] as String? ?? '')?.toLocal(),
+      maxPitchers: (entitlement?['max_pitchers'] as num?)?.toInt() ?? 1,
+    );
+  }
 }

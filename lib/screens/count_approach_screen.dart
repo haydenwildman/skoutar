@@ -6,7 +6,6 @@ import '../theme/app_theme.dart';
 import '../widgets/glow.dart';
 import '../widgets/stat_vbox.dart';
 import '../widgets/year_filter_dropdown.dart';
-import 'plus_lock_card.dart';
 
 const Map<String, String> _countInfo = {
   'Plate Appearances': 'Calculation: Count of completed plate appearances in the '
@@ -49,9 +48,6 @@ class _CountApproachScreenState extends State<CountApproachScreen> {
   @override
   Widget build(BuildContext context) {
     final session = context.watch<AppSession>();
-    if (!session.isPlus) {
-      return const PlusLockCard(feature: 'Count & Approach analytics');
-    }
     var data = session.filteredPitches;
     if (_team != 'All') data = data.where((p) => p.game == _team).toList();
     if (_gameNum != 'All') {

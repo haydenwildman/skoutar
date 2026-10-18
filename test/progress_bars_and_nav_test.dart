@@ -143,6 +143,50 @@ void main() {
       expect(find.byType(TierScaleBar), findsOneWidget);
       expect(t.takeException(), isNull);
     });
+
+    for (final w in <double>[1440, 768, 430, 320]) {
+      testWidgets('PerfStatBar puts the real value in a large header row at ${w.toInt()}px', (t) async {
+        await pump(
+          t,
+          w,
+          Column(children: const [
+            PerfStatBar(label: 'ERA', value: '3.62', color: AppColors.perfAverage, statKey: 'ERA', rawValue: 3.62),
+            PerfStatBar(label: 'Two-Strike Count %', value: '54.3%', color: AppColors.perfGood, statKey: 'f_strike', rawValue: 54.3),
+            PerfStatBar(label: 'AVG Against', value: 'N/A', color: AppColors.colBorder),
+            PerfStatBar(label: 'IP', value: '12.1', color: AppColors.tint),
+            StatSummaryCard(label: 'SLG Against', value: '.412', statKey: 'SLG', rawValue: 0.412),
+          ]),
+        );
+        expect(t.takeException(), isNull);
+        // The actual statistic is its own Text, sized as a primary number
+        // (>= 22px on phones, 28px on desktop) - not text on the bar.
+        final era = t.widget<Text>(find.text('3.62'));
+        expect(era.style!.fontSize, greaterThanOrEqualTo(22));
+        expect(era.style!.fontWeight, FontWeight.w900);
+        // The value sits on the same row as its label and above the bar.
+        expect(t.getTopLeft(find.text('3.62')).dy, lessThan(t.getTopLeft(find.byType(TierScaleBar).first).dy));
+        expect(find.text('.412'), findsOneWidget);
+      });
+    }
+
+    testWidgets('statValueFontSize steps down for narrower screens', (t) async {
+      late double desktop, tablet, phone;
+      Future<void> at(double w, void Function(double) set) async {
+        t.view.physicalSize = Size(w, 900);
+        t.view.devicePixelRatio = 1.0;
+        await t.pumpWidget(MaterialApp(home: Builder(builder: (c) {
+          set(statValueFontSize(c));
+          return const SizedBox();
+        })));
+      }
+      await at(1440, (v) => desktop = v);
+      await at(768, (v) => tablet = v);
+      await at(390, (v) => phone = v);
+      addTearDown(t.view.resetPhysicalSize);
+      expect(desktop, 28);
+      expect(tablet, lessThan(desktop));
+      expect(phone, lessThan(tablet));
+    });
   });
 
   group('navigation', () {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/sequence_scoring.dart';
 import '../theme/app_theme.dart';
+import 'stat_vbox.dart' show statValueFontSize;
 
 /// "Why this score" panels for Pitch Sequencing. Everything shown here comes
 /// from the engine's recorded calculations (components, samples, notes);
@@ -30,29 +31,41 @@ class _CompRow extends StatelessWidget {
     final evaluated = earned != null && max != null && max! > 0;
     final frac = evaluated ? (earned! / max!).clamp(0.0, 1.0) : 0.0;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
             Expanded(
               child: Text('$label  (${nominal.round()} pts)',
-                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5, color: AppColors.ink)),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 11.5, color: AppColors.colMuted)),
             ),
-            Text(
-              evaluated ? '${_pts(earned!)} / ${_pts(max!)}' : 'not evaluated',
-              style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 12.5,
-                  color: evaluated ? AppColors.ink : AppColors.colMuted),
+            const SizedBox(width: 8),
+            Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: Text(
+                  evaluated ? '${_pts(earned!)} / ${_pts(max!)}' : 'not evaluated',
+                  maxLines: 1,
+                  softWrap: false,
+                  style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: evaluated ? statValueFontSize(context) - 6 : 13,
+                      height: 1.1,
+                      color: evaluated ? AppColors.ink : AppColors.colMuted),
+                ),
+              ),
             ),
           ]),
-          const SizedBox(height: 2),
+          const SizedBox(height: 4),
           ClipRRect(
-            borderRadius: BorderRadius.circular(3),
+            borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
               value: frac,
-              minHeight: 6,
+              minHeight: 8,
               backgroundColor: AppColors.tint,
               valueColor: AlwaysStoppedAnimation(
                   evaluated ? AppColors.brandOrangeDeep : AppColors.colBorder),

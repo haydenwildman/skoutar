@@ -1,5 +1,6 @@
 import '../models/pitch_event.dart';
 import 'stats_service.dart';
+import 'scouting_game_plan.dart';
 
 /// All derived numbers/heuristics shown on a Scouting Report, computed once
 /// and shared by both the on-screen widget (`ScoutingReportScreen`) and the
@@ -36,6 +37,9 @@ class ScoutingReportData {
   /// "Key Hitters" card.
   final List<Map<String, dynamic>> keyHitters;
 
+  /// Game-plan analysis (takeaways, hitter cards, situations, at-bat review).
+  final ScoutingGamePlan plan;
+
   ScoutingReportData._({
     required this.team,
     required this.data,
@@ -58,14 +62,17 @@ class ScoutingReportData {
     required this.bestSeqs,
     required this.avoidSeqs,
     required this.keyHitters,
+    required this.plan,
   });
 
-  factory ScoutingReportData.compute(String team, List<PitchEvent> data) {
+  /// [history]: the full season-filtered pitch list, so batter matchup history
+  /// and sequencing scores can see games outside this report's filter.
+  factory ScoutingReportData.compute(String team, List<PitchEvent> data, {List<PitchEvent>? history}) {
     final stats = StatsService.overview(data);
     final hitters = StatsService.batterStats(data);
     final breakdown = StatsService.pitchBreakdown(data);
     final approach = StatsService.scoutingApproach(data);
-    final seqs = StatsService.pitchSequencing(data);
+    final seqs = StatsService.pitchSequencing(data, history: history);
     final topDamage = StatsService.topDamageCount(data);
     final cd = StatsService.countApproach(data);
     final gameTrend = StatsService.opponentGameTrend(data);
@@ -108,6 +115,9 @@ class ScoutingReportData {
         return bo.compareTo(ao);
       });
 
+    final plan = ScoutingGamePlanBuilder.build(team, data,
+        history: history, bestSeqs: bestSeqs, avoidSeqs: avoidSeqs);
+
     return ScoutingReportData._(
       team: team,
       data: data,
@@ -130,6 +140,7 @@ class ScoutingReportData {
       bestSeqs: bestSeqs,
       avoidSeqs: avoidSeqs,
       keyHitters: keyHitters.take(5).toList(),
+      plan: plan,
     );
   }
 }

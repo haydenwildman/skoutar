@@ -20,10 +20,14 @@ import '../theme/app_theme.dart';
 class TierScaleBar extends StatelessWidget {
   final String statKey;
   final double? rawValue;
+
+  /// Kept for API compatibility. The number itself is no longer drawn on the
+  /// bar (no floating chip): the caller prints it in a large header row above
+  /// the bar (see [PerfStatBar]) so the real statistic is never confused with
+  /// the marker's position.
   final String valueText;
 
-  /// Compact mode: a thin band + marker with no value chip (for small stat
-  /// cells that already print the value themselves).
+  /// Compact mode: a slightly thinner band + marker (for small stat cells).
   final bool compact;
 
   const TierScaleBar({
@@ -42,9 +46,8 @@ class TierScaleBar extends StatelessWidget {
     final tierColor = perfHex(statKey, rawValue);
 
     final bandH = compact ? 6.0 : 12.0;
-    final chipH = compact ? 0.0 : 20.0;
     final dotD = compact ? 10.0 : 16.0;
-    final totalH = compact ? dotD : chipH + 4 + dotD;
+    final totalH = dotD;
 
     return SizedBox(
       width: double.infinity,
@@ -53,39 +56,6 @@ class TierScaleBar extends StatelessWidget {
         final track = constraints.maxWidth;
         final x = frac == null ? null : track * frac;
         final bandTop = totalH - dotD / 2 - bandH / 2;
-
-        // Value chip: centered over the marker, kept fully inside the track.
-        Widget? chip;
-        if (!compact) {
-          final wanted = valueText.length * 7.4 + 16;
-          final chipW = (wanted < 30 ? 30.0 : wanted) > track ? track : (wanted < 30 ? 30.0 : wanted);
-          final cx = x ?? 0;
-          final left = (x == null ? 0.0 : cx - chipW / 2).clamp(0.0, (track - chipW).clamp(0.0, track)).toDouble();
-          final textColor = _onTier(tierColor);
-          chip = Positioned(
-            left: left,
-            top: 0,
-            width: chipW,
-            height: chipH,
-            child: Container(
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: x == null ? AppColors.colBorder : tierColor,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                valueText,
-                maxLines: 1,
-                softWrap: false,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900,
-                  color: x == null ? AppColors.colMuted : textColor,
-                ),
-              ),
-            ),
-          );
-        }
 
         return Stack(
           clipBehavior: Clip.none,
@@ -120,20 +90,10 @@ class TierScaleBar extends StatelessWidget {
                   ),
                 ),
               ),
-            if (chip != null) chip,
           ],
         );
       }),
     );
-  }
-
-  static Color _onTier(Color bg) {
-    if (bg == AppColors.perfExcellent ||
-        bg == AppColors.perfPoor ||
-        bg == AppColors.perfBelowAvg) {
-      return Colors.white;
-    }
-    return AppColors.colText;
   }
 }
 

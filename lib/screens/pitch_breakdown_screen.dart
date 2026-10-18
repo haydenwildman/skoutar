@@ -9,6 +9,7 @@ import '../widgets/stat_vbox.dart';
 import '../widgets/stat_hold_info.dart';
 import '../services/color_guides.dart';
 import '../widgets/year_filter_dropdown.dart';
+import '../utils/responsive.dart';
 
 /// Info-button reference text for every metric on this tab. Copied from the
 /// team's pitch-metric glossary so every stat here explains itself exactly
@@ -80,6 +81,9 @@ const Map<String, String> _pitchMetricInfo = {
       'baserunners and work more efficiently.',
 };
 
+/// The three selectable column groups of the Pitch Profiles table.
+enum _ProfileView { results, approach, contact }
+
 class PitchBreakdownScreen extends StatefulWidget {
   const PitchBreakdownScreen({super.key});
 
@@ -90,6 +94,14 @@ class PitchBreakdownScreen extends StatefulWidget {
 class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
   String _team = 'All';
   String _gameNum = 'All';
+  _ProfileView _view = _ProfileView.results;
+
+  /// Pitch type whose row is highlighted in Pitch Profiles (null = none).
+  /// Survives switching between Results / Approach / Contact.
+  String? _selectedPitch;
+
+  void _togglePitch(String pitch) =>
+      setState(() => _selectedPitch = _selectedPitch == pitch ? null : pitch);
 
   @override
   Widget build(BuildContext context) {
@@ -291,6 +303,33 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
             _MetricRow('Line Drive %', 'lineDrivePct', 'battedBallsN', tier: 'ld_pct'),
           ];
 
+          // Which columns each view shows. Together the three views cover every
+          // stat the table already had (Ball % rides with the Results view).
+          const viewOrder = <_ProfileView, List<String>>{
+            _ProfileView.results: ['BAA', 'Strike %', 'K%', 'BB%', 'Ball %'],
+            _ProfileView.approach: ['Usage %', 'Take %', 'Swing %', 'Whiff %', 'Foul %'],
+            _ProfileView.contact: ['In Play %', 'Ground Ball %', 'Fly Ball %', 'Line Drive %'],
+          };
+          final byLabel = {for (final m in metrics) m.label: m};
+          final shown = [for (final l in viewOrder[_view]!) byLabel[l]!];
+
+          final presentPitches = {for (final r in breakdown) r['pitchType'] as String};
+          final selected = presentPitches.contains(_selectedPitch) ? _selectedPitch : null;
+          final narrow = Responsive.isPhone(context);
+          final valueSize = narrow ? 13.5 : 15.0;
+
+          // Very light wash toward white: same hue and same cutoffs, just less
+          // saturated so the numbers - not the color blocks - lead.
+          Color soften(Color c) => c == AppColors.tint ? c : Color.lerp(c, Colors.white, 0.14)!;
+
+          const countNoun = <String, String>{
+            'n': 'pitches',
+            'abN': 'official at-bats',
+            'paN': 'plate appearances',
+            'swingsN': 'swings',
+            'battedBallsN': 'balls in play',
+          };
+
           final overall = StatsService.pitchBreakdownOverall(data);
 
           Color textColorForCell(Color bg) => (bg == AppColors.perfExcellent ||
@@ -390,23 +429,72 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
             final valueText = value == null
                 ? 'N/A'
                 : (m.isAvg ? value.toStringAsFixed(3) : '${value}%');
-            final what = '${_pitchMetricInfo[m.label] ?? m.label}\n\n${whyLine(row, m, bg, valueText)}';
+            final what = '${_pitchMetricInfo[m.label] ?? m.label}\n\n${whyLine(row, m, bg, valueText)}'
+                '${n == null ? '' : '\n\nSample size: the small number under the value ($n) is how many ${countNoun[m.nKey] ?? 'events'} this stat is based on. Fewer than a handful means the percentage can swing a lot, so weigh it accordingly.'}';
             return StatHoldInfo(
               title: '${m.label} · $rowName',
               description: composeHoldInfo(what: what, colorGuide: guides[m.label]),
               child: Container(
-                color: bg,
-                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 3),
+                color: soften(bg),
+                padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 2),
                 alignment: Alignment.center,
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Text(valueText,
-                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: tc)),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(valueText,
+                        maxLines: 1,
+                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: valueSize, color: tc)),
+                  ),
                   if (n != null)
                     Text('$n',
-                        style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: tc.withOpacity(0.8))),
+                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w500, color: tc.withOpacity(0.7))),
                 ]),
               ),
             );
+          }
+
+          // Click / tap / Enter on a pitch row highlights it (border) and dims
+          // the others a little; the same pitch again clears it. Only taps are
+          // handled here - press-and-hold explanations still work untouched.
+          Widget selectable(String pitch, Widget cell, {bool first = false, bool last = false}) {
+            final isSel = selected == pitch;
+            Widget w = cell;
+            if (isSel) {
+              const side = BorderSide(color: AppColors.ink, width: 2.5);
+              w = DecoratedBox(
+                position: DecorationPosition.foreground,
+                decoration: BoxDecoration(
+                  border: Border(
+                    top: side,
+                    bottom: side,
+                    left: first ? side : BorderSide.none,
+                    right: last ? side : BorderSide.none,
+                  ),
+                ),
+                child: w,
+              );
+            } else if (selected != null) {
+              w = Opacity(opacity: 0.55, child: w);
+            }
+            w = GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => _togglePitch(pitch), child: w);
+            if (first) {
+              w = Semantics(
+                button: true,
+                selected: isSel,
+                label: '${pitch.toUpperCase()} row. Activate to ${isSel ? 'clear' : 'highlight'}.',
+                child: FocusableActionDetector(
+                  mouseCursor: SystemMouseCursors.click,
+                  actions: {
+                    ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
+                      _togglePitch(pitch);
+                      return null;
+                    }),
+                  },
+                  child: w,
+                ),
+              );
+            }
+            return w;
           }
 
           return GlowCard(
@@ -416,43 +504,57 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text('Pitch Profiles', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
-                  const Text('Each pitch label shows the total pitches thrown of that type. Each stat box: value on top, the count it is based on below. Rows = pitch, columns = stat — read across a row to see one pitch\'s full profile, or down a column to compare pitches on one stat. Hover a column name for what it means. Swing %, Take %, Foul % and In Play % are colored by how they pair with Whiff %, called strikes, and outs on balls in play.',
+                  const SizedBox(height: 8),
+                  // Quick overview first: one compact card per pitch thrown.
+                  _PitchSummaryCards(
+                    breakdown: breakdown,
+                    selected: selected,
+                    onTap: _togglePitch,
+                    usageInfo: _pitchMetricInfo['Usage %']!,
+                    whiffInfo: _pitchMetricInfo['Whiff %']!,
+                  ),
+                  const SizedBox(height: 12),
+                  _ProfileViewTabs(value: _view, onChanged: (v) => setState(() => _view = v)),
+                  const SizedBox(height: 6),
+                  const Text(
+                      'Pick Results, Approach or Contact to choose the stats shown. Each stat box: value on top, the sample it is based on below. Tap a pitch row to highlight it; tap it again to clear. Press and hold any box or pitch for what it means and its color cutoffs.',
                       style: TextStyle(fontSize: 11, color: AppColors.colMuted, fontStyle: FontStyle.italic)),
                   const SizedBox(height: 8),
-                  // 15 columns can't be read at phone width, so below a
-                  // minimum table width the table scrolls sideways
-                  // instead of squeezing every column to ~20px.
-                  LayoutBuilder(builder: (context, constraints) {
-                    const minTableWidth = 760.0;
-                    final tableWidth =
-                        constraints.maxWidth < minTableWidth ? minTableWidth : constraints.maxWidth;
-                    final table = Table(
-                    border: TableBorder.all(color: AppColors.colBorder, width: 2),
+                  Table(
+                    border: TableBorder.all(color: AppColors.colBorder, width: 1),
+                    defaultVerticalAlignment: TableCellVerticalAlignment.fill,
                     defaultColumnWidth: const FlexColumnWidth(1),
-                    columnWidths: const {0: FlexColumnWidth(0.9)},
+                    columnWidths: {0: narrow ? const FixedColumnWidth(56) : const FlexColumnWidth(0.9)},
                     children: [
                       TableRow(
                         decoration: const BoxDecoration(color: AppColors.ink),
                         children: [
-                          const Padding(
-                            padding: EdgeInsets.all(6),
-                            child: Text('Pitch', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 11)),
+                          // The first cell sets the row height; the rest fill it.
+                          const TableCell(
+                            verticalAlignment: TableCellVerticalAlignment.top,
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+                              child: Text('Pitch', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 11)),
+                            ),
                           ),
-                          for (final m in metrics)
+                          for (final m in shown)
                             Padding(
-                              padding: const EdgeInsets.all(6),
+                              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 3),
                               child: Tooltip(
                                 message: _pitchMetricInfo[m.label] ?? '',
                                 child: Text(m.label,
                                     textAlign: TextAlign.center,
-                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 11)),
+                                    style: TextStyle(
+                                        color: Colors.white, fontWeight: FontWeight.w800, fontSize: narrow ? 10.5 : 11.5)),
                               ),
                             ),
                         ],
                       ),
                       if (overall != null)
                         TableRow(children: [
-                          pitchLabelCell(
+                          TableCell(
+                            verticalAlignment: TableCellVerticalAlignment.top,
+                            child: pitchLabelCell(
                             name: 'OVERALL',
                             pitches: overall['n'] as int,
                             color: AppColors.brandOrangeDeep,
@@ -460,27 +562,34 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
                             colorGuide: swatchLine(AppColors.brandOrangeDeep,
                                 'Orange label: marks the combined row. It is a fixed label color, not a grade, so it has no cutoffs.'),
                           ),
-                          for (final m in metrics) statBox(overall, m, 'Overall'),
+                          ),
+                          for (final m in shown) statBox(overall, m, 'Overall'),
                         ]),
                       for (final row in breakdown)
                         TableRow(children: [
-                          pitchLabelCell(
-                            name: (row['pitchType'] as String).toUpperCase(),
-                            pitches: row['n'] as int,
-                            color: AppColors.pitchColor(row['pitchType'] as String),
-                            what: 'This row shows every stat for this one pitch type.',
-                            colorGuide: pitchTypeColorGuide([row['pitchType'] as String]),
+                          TableCell(
+                            verticalAlignment: TableCellVerticalAlignment.top,
+                            child: selectable(
+                              row['pitchType'] as String,
+                              pitchLabelCell(
+                                name: (row['pitchType'] as String).toUpperCase(),
+                                pitches: row['n'] as int,
+                                color: AppColors.pitchColor(row['pitchType'] as String),
+                                what: 'This row shows every stat for this one pitch type. Tap the row to highlight it.',
+                                colorGuide: pitchTypeColorGuide([row['pitchType'] as String]),
+                              ),
+                              first: true,
+                            ),
                           ),
-                          for (final m in metrics) statBox(row, m, (row['pitchType'] as String).toUpperCase()),
+                          for (var i = 0; i < shown.length; i++)
+                            selectable(
+                              row['pitchType'] as String,
+                              statBox(row, shown[i], (row['pitchType'] as String).toUpperCase()),
+                              last: i == shown.length - 1,
+                            ),
                         ]),
                     ],
-                  );
-                    if (constraints.maxWidth >= minTableWidth) return table;
-                    return SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: SizedBox(width: tableWidth, child: table),
-                    );
-                  }),
+                  ),
                 ],
               ),
             ),
@@ -533,6 +642,8 @@ Widget _horizontalBarChart(List<_HBar> bars, {double? maxValue}) {
   // are ellipsized instead of overflowing.
   final longest = bars.map((b) => b.label.length).reduce((a, b) => a > b ? a : b);
   final labelW = (longest * 7.5 + 12).clamp(48.0, 100.0).toDouble();
+  final longestValue = bars.map((b) => b.displayValue.length).reduce((a, b) => a > b ? a : b);
+  final valueW = (longestValue * 12.5 + 6).clamp(48.0, 92.0).toDouble();
 
   return Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -563,9 +674,28 @@ Widget _horizontalBarChart(List<_HBar> bars, {double? maxValue}) {
                 child: ValueBar(
                   fraction: (b.value / safeMax).clamp(0.0, 1.0),
                   color: b.color,
-                  text: b.displayValue,
-                  fontSize: 11,
-                  radius: 7,
+                  text: '',
+                  height: 16,
+                  radius: 8,
+                ),
+              ),
+              const SizedBox(width: 8),
+              // The real value, large and bold, at the right end of the row.
+              SizedBox(
+                width: valueW,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    b.displayValue,
+                    maxLines: 1,
+                    softWrap: false,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.ink,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -573,4 +703,169 @@ Widget _horizontalBarChart(List<_HBar> bars, {double? maxValue}) {
         ),
     ],
   );
+}
+
+/// Compact segmented control for the Pitch Profiles column groups.
+class _ProfileViewTabs extends StatelessWidget {
+  final _ProfileView value;
+  final ValueChanged<_ProfileView> onChanged;
+  const _ProfileViewTabs({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    const labels = {
+      _ProfileView.results: 'Results',
+      _ProfileView.approach: 'Approach',
+      _ProfileView.contact: 'Contact',
+    };
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.tint,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.colBorder),
+      ),
+      padding: const EdgeInsets.all(3),
+      child: Row(children: [
+        for (final v in _ProfileView.values)
+          Expanded(
+            child: Semantics(
+              button: true,
+              selected: v == value,
+              label: '${labels[v]} stats',
+              child: InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => onChanged(v),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 9),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: v == value ? AppColors.brandOrangeDeep : Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    labels[v]!,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                      color: v == value ? Colors.white : AppColors.ink,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ]),
+    );
+  }
+}
+
+/// One compact card per pitch type thrown: name + total pitches, Usage %, Whiff %.
+/// Values come straight from the same [StatsService.pitchBreakdown] rows the
+/// table uses (n, usagePct, whiffPct), so they always agree with it.
+class _PitchSummaryCards extends StatelessWidget {
+  final List<Map<String, dynamic>> breakdown;
+  final String? selected;
+  final ValueChanged<String> onTap;
+  final String usageInfo;
+  final String whiffInfo;
+  const _PitchSummaryCards({
+    required this.breakdown,
+    required this.selected,
+    required this.onTap,
+    required this.usageInfo,
+    required this.whiffInfo,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, constraints) {
+      const gap = 8.0;
+      final w = constraints.maxWidth;
+      final perRow = w < 420 ? 2 : (w < 640 ? 3 : 5);
+      var cardW = (w - gap * (perRow - 1)) / perRow;
+      if (perRow > 2 && cardW > 180) cardW = 180;
+      return Wrap(spacing: gap, runSpacing: gap, children: [
+        for (final row in breakdown) SizedBox(width: cardW, child: _card(context, row)),
+      ]);
+    });
+  }
+
+  Widget _card(BuildContext context, Map<String, dynamic> row) {
+    final type = row['pitchType'] as String;
+    final name = type.toUpperCase();
+    final color = AppColors.pitchColor(type);
+    final n = row['n'] as int;
+    final usage = row['usagePct'] as double?;
+    final whiff = row['whiffPct'] as double?;
+    final isSel = selected == type;
+    final dim = selected != null && !isSel;
+
+    Widget stat(String value, String label) => Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(value,
+                    maxLines: 1,
+                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: AppColors.ink)),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.colMuted)),
+          ],
+        );
+
+    Widget card = Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: AppColors.tint,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: isSel ? AppColors.ink : AppColors.colBorder, width: isSel ? 2 : 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              constraints: const BoxConstraints(maxWidth: 70),
+              decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
+              child: Text(name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 12)),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text('$n pitch${n == 1 ? '' : 'es'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.colMuted)),
+            ),
+          ]),
+          const SizedBox(height: 6),
+          stat(usage == null ? 'N/A' : '$usage%', 'Usage'),
+          stat(whiff == null ? 'N/A' : '$whiff%', 'Whiff'),
+        ],
+      ),
+    );
+    if (dim) card = Opacity(opacity: 0.6, child: card);
+
+    return StatHoldInfo(
+      title: name,
+      description: composeHoldInfo(
+        what: '$n pitch${n == 1 ? '' : 'es'} thrown.\n\n$usageInfo\n\n$whiffInfo\n\nTap the card to highlight this pitch in the table below.',
+        colorGuide: pitchTypeColorGuide([type]),
+      ),
+      child: Semantics(
+        button: true,
+        selected: isSel,
+        label: '$name summary card',
+        child: GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => onTap(type), child: card),
+      ),
+    );
+  }
 }

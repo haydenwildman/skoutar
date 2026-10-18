@@ -6,6 +6,7 @@ import '../models/pitch_event.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glow.dart';
 import '../utils/responsive.dart';
+import '../widgets/stat_vbox.dart' show statValueFontSize;
 import '../widgets/baseball_field_painter.dart';
 import '../services/batter_history_service.dart';
 import '../services/stats_service.dart' show statHasScale;
@@ -57,7 +58,6 @@ class _GameInputScreenState extends State<GameInputScreen> {
   _Stage _stage = _Stage.pitchType;
   _Stage _stageBeforeHistory = _Stage.pitchType;
 
-  static const pitchTypes = ['FB', 'CV', 'CH', 'SL'];
   static const callButtons = [
     ['Ball', 'b'],
     ['Called Strike', 'sl'],
@@ -72,12 +72,6 @@ class _GameInputScreenState extends State<GameInputScreen> {
   // ── Full names for every abbreviated code, used both as button labels
   // (per the redesign's "full words instead of abbreviations" requirement)
   // and as History screen labels. ──
-  static const Map<String, String> pitchTypeFullNames = {
-    'FB': 'Fastball',
-    'CV': 'Curveball',
-    'CH': 'Changeup',
-    'SL': 'Slider',
-  };
   static const Map<String, String> callTooltips = {
     'b': 'Ball — pitch outside the strike zone, not swung at',
     'sl': 'Strike looking — called third strike, batter did not swing',
@@ -488,29 +482,6 @@ class _GameInputScreenState extends State<GameInputScreen> {
     }
   }
 
-  Future<void> _confirmRemovePitchType(String pt, {required bool isBuiltIn}) async {
-    final session = context.read<AppSession>();
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Remove "${_pitchTypeLabel(pt)}" button?'),
-        content: const Text(
-            'This removes the button from Pitch Type. Pitches already logged with it keep their data.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-    if (_pitchType == pt) setState(() => _pitchType = null);
-    if (isBuiltIn) {
-      await session.hideBuiltInPitchType(pt);
-    } else {
-      await session.removeCustomPitchType(pt);
-    }
-  }
-
   /// Opens the "Add New Pitch Type" dialog — a full pitch name (no
   /// character limit) plus a color swatch. The chosen color is stored with
   /// the pitch and used everywhere it appears (button, spray chart,
@@ -526,10 +497,9 @@ class _GameInputScreenState extends State<GameInputScreen> {
           final session = context.read<AppSession>();
           final name = _customPitchCtrl.text.trim();
           if (name.isEmpty) return;
-          if (AppSession.builtInPitchTypeFullNames
-              .containsKey(name.toLowerCase())) {
+          if (session.customPitchTypes.contains(name.toLowerCase())) {
             ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('"$name" is already a built-in pitch type.')));
+                SnackBar(content: Text('You already have a pitch called "$name".')));
             return;
           }
           await session.addCustomPitchType(name, color: chosen);
@@ -1135,7 +1105,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
         Row(
           children: [
             Flexible(
-              child: Text(session.currentUser?.pitcherDisplayName ?? '',
+              child: Text(session.activePitcherName,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                       fontWeight: FontWeight.w900,
@@ -1523,19 +1493,6 @@ class _GameInputScreenState extends State<GameInputScreen> {
             spacing: 10,
             runSpacing: 10,
             children: [
-              ...pitchTypes.where((pt) => !session.hiddenBuiltInPitchTypes.contains(pt)).map(
-                    (pt) => _pitchTypeTile(
-                      code: pt,
-                      label: _pitchTypeLabel(pt),
-                      stats: _gamePitchTypeStats(session, pt),
-                      onTap: () => setState(() {
-                        _pitchType = pt;
-                        _stage = _Stage.call;
-                      }),
-                      onLongPress: () => _confirmRemovePitchType(pt, isBuiltIn: true),
-                      tooltip: '${_pitchTypeLabel(pt)} — press & hold to remove',
-                    ),
-                  ),
               ...session.customPitchTypes.map(
                 (pt) => _pitchTypeTile(
                   code: pt,
@@ -1559,15 +1516,11 @@ class _GameInputScreenState extends State<GameInputScreen> {
               ),
             ],
           ),
-          if (session.hiddenBuiltInPitchTypes.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () => session.restoreBuiltInPitchTypes(),
-                icon: const Icon(Icons.restore, size: 16),
-                label: const Text('Restore removed pitch types'),
-              ),
+          if (session.customPitchTypes.isEmpty) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'No pitch types yet. Tap "Add New Pitch", type a name and pick a color.',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.colMuted),
             ),
           ],
           const SizedBox(height: 20),
@@ -2444,7 +2397,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
           Text(label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800, letterSpacing: 0.3, color: AppColors.colMuted)),
+              style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, letterSpacing: 0.3, color: AppColors.colMuted)),
           const SizedBox(height: 1),
           FittedBox(
             fit: BoxFit.scaleDown,
@@ -2452,7 +2405,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
             child: Text(display,
                 maxLines: 1,
                 style: TextStyle(
-                    fontSize: 14,
+                    fontSize: statValueFontSize(context, compact: true),
                     fontWeight: FontWeight.w900,
                     color: hasValue ? AppColors.colText : AppColors.colMuted)),
           ),

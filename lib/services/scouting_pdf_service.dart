@@ -4,6 +4,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../models/pitch_event.dart';
 import 'scouting_report_data.dart';
+import 'stats_service.dart' show perfHex, statValueFraction, statLowerIsBetter;
 
 /// PDF brand colors — same hex values as [AppColors] in app_theme.dart,
 /// just re-expressed as PdfColor since the `pdf` package can't consume
@@ -27,8 +28,12 @@ class _PdfColors {
   static final goodFill = PdfColor.fromInt(0xFFF0FDF4);
   static final badFill = PdfColor.fromInt(0xFFFEF2F2);
 
-  static PdfColor onColor(PdfColor bg) =>
-      (bg == perfExcellent || bg == perfPoor || bg == perfBelowAvg) ? PdfColors.white : colText;
+  static PdfColor onColor(PdfColor bg) {
+    final v = bg.toInt();
+    return (v == perfExcellent.toInt() || v == perfPoor.toInt() || v == perfBelowAvg.toInt())
+        ? PdfColors.white
+        : colText;
+  }
 }
 
 /// Builds a professional, multi-page PDF export of a Scouting Report.
@@ -41,39 +46,54 @@ class ScoutingPdfService {
     return s.startsWith('0.') ? s.substring(1) : s;
   }
 
+  /// The PDF uses the app's own [perfHex] grading (same thresholds and
+  /// good/bad direction as the on-screen bars) so a stat is the same color in
+  /// the report as it is in the app.
   static PdfColor _perfHex(String stat, double? value) {
     if (value == null) return _PdfColors.tint;
-    // Mirrors StatsService.perfHex()'s tiering closely enough for the PDF's
-    // purposes — pulls the same thresholds used across the app for the
-    // stats that appear on the scouting report.
-    double v = value;
-    // Normalize a 0-1 scale roughly using known good/bad bounds per stat.
-    double frac;
-    switch (stat) {
-      case 'AVG':
-        frac = 1 - (v / 0.350).clamp(0.0, 1.0);
-        break;
-      case 'K_pct':
-        frac = (v / 35).clamp(0.0, 1.0);
-        break;
-      case 'BB_pct':
-      case 'OBP_allowed':
-        frac = 1 - (v / 0.450).clamp(0.0, 1.0);
-        break;
-      case 'whiff_pct':
-        frac = (v / 40).clamp(0.0, 1.0);
-        break;
-      case 'f_strike':
-        frac = (v / 75).clamp(0.0, 1.0);
-        break;
-      default:
-        frac = 0.5;
-    }
-    if (frac >= 0.8) return _PdfColors.perfExcellent;
-    if (frac >= 0.6) return _PdfColors.perfGood;
-    if (frac >= 0.4) return _PdfColors.perfAverage;
-    if (frac >= 0.2) return _PdfColors.perfBelowAvg;
-    return _PdfColors.perfPoor;
+    return PdfColor.fromInt(perfHex(stat, value).value);
+  }
+
+  /// Large-number stat bar for the PDF:
+  ///
+  ///   LABEL                              VALUE
+  ///   [=========== bar ==================]
+  ///
+  /// The bar is filled from the red (poor) end to the real value's position on
+  /// the stat's scale, in the stat's tier color - the same rule the app uses.
+  static pw.Widget _statBar(String statKey, String label, String value, double? raw, {pw.Widget? leading}) {
+    final tier = _perfHex(statKey, raw);
+    final frac = statValueFraction(statKey, raw);
+    final fromRight = statLowerIsBetter(statKey);
+    final int fillFlex = frac == null ? 0 : (frac.clamp(0.0, 1.0) * 1000).round().clamp(frac > 0 ? 20 : 0, 1000).toInt();
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 4),
+      child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+        pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.center, children: [
+          leading ??
+              pw.Text(label.toUpperCase(),
+                  style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: _PdfColors.colMuted)),
+          pw.Spacer(),
+          pw.Text(value,
+              style: pw.TextStyle(
+                  fontSize: 18,
+                  fontWeight: pw.FontWeight.bold,
+                  color: raw == null ? _PdfColors.colMuted : _PdfColors.ink)),
+        ]),
+        pw.SizedBox(height: 2),
+        pw.Container(
+          height: 6,
+          color: _PdfColors.colBorder,
+          child: fillFlex <= 0
+              ? null
+              : pw.Row(children: [
+                  if (fromRight && fillFlex < 1000) pw.Expanded(flex: 1000 - fillFlex, child: pw.SizedBox(height: 6)),
+                  pw.Expanded(flex: fillFlex, child: pw.Container(height: 6, color: tier)),
+                  if (!fromRight && fillFlex < 1000) pw.Expanded(flex: 1000 - fillFlex, child: pw.SizedBox(height: 6)),
+                ]),
+        ),
+      ]),
+    );
   }
 
   static Future<Uint8List> generate(ScoutingReportData r) async {
@@ -124,6 +144,8 @@ class ScoutingPdfService {
         ),
         build: (context) => [
           pw.SizedBox(height: 8),
+          _headlineStatsRow(r),
+          pw.SizedBox(height: 6),
           _summaryStatsRow(r),
           pw.SizedBox(height: 12),
           _threePillets(r),
@@ -183,6 +205,46 @@ class ScoutingPdfService {
     ]);
   }
 
+  // ── Headline row: ERA / WHIP / AVG Against / SLG Against ─────────
+  static pw.Widget _headlineStatsRow(ScoutingReportData r) {
+    final s = r.stats;
+    pw.Widget card(String label, String value, String statKey, double? raw) {
+      final tier = raw == null ? _PdfColors.colBorder : _perfHex(statKey, raw);
+      return pw.Expanded(
+        child: pw.Container(
+          margin: const pw.EdgeInsets.symmetric(horizontal: 2),
+          decoration: pw.BoxDecoration(
+            color: _PdfColors.tint,
+            borderRadius: pw.BorderRadius.circular(6),
+            border: pw.Border.all(color: _PdfColors.colBorder, width: 0.75),
+          ),
+          child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+            pw.Padding(
+              padding: const pw.EdgeInsets.fromLTRB(8, 6, 8, 5),
+              child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+                pw.Text(label.toUpperCase(),
+                    style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: _PdfColors.colMuted)),
+                pw.Text(value,
+                    style: pw.TextStyle(
+                        fontSize: 24,
+                        fontWeight: pw.FontWeight.bold,
+                        color: raw == null ? _PdfColors.colMuted : _PdfColors.ink)),
+              ]),
+            ),
+            pw.Container(height: 4, color: tier),
+          ]),
+        ),
+      );
+    }
+
+    return pw.Row(children: [
+      card('ERA', s.era?.toStringAsFixed(2) ?? 'N/A', 'ERA', s.era),
+      card('WHIP', s.whip?.toStringAsFixed(2) ?? 'N/A', 'WHIP', s.whip),
+      card('AVG Against', s.avg != null ? _fmtAvg(s.avg!) : 'N/A', 'AVG', s.avg),
+      card('SLG Against', s.slg != null ? _fmtAvg(s.slg!) : 'N/A', 'SLG', s.slg),
+    ]);
+  }
+
   // ── Summary stat row ─────────────────────────────────────────────
   static pw.Widget _summaryStatsRow(ScoutingReportData r) {
     final s = r.stats;
@@ -198,7 +260,7 @@ class ScoutingPdfService {
               pw.SizedBox(height: 2),
               pw.Text(value,
                   style: pw.TextStyle(
-                      fontSize: 14, fontWeight: pw.FontWeight.bold, color: _PdfColors.onColor(bg))),
+                      fontSize: 22, fontWeight: pw.FontWeight.bold, color: _PdfColors.onColor(bg))),
             ]),
           ),
         );
@@ -378,24 +440,18 @@ class ScoutingPdfService {
       pw.SizedBox(height: 3),
     ];
     for (final row in withAvgRows) {
-      final bg = _perfHex('AVG', row['avgAgainst'] as double?);
-      rows.add(pw.Padding(
-        padding: const pw.EdgeInsets.symmetric(vertical: 2),
-        child: pw.Row(children: [
-          pw.Container(
-            padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-            decoration: pw.BoxDecoration(color: _PdfColors.accent, borderRadius: pw.BorderRadius.circular(8)),
-            child: pw.Text((row['pitchType'] as String).toUpperCase(),
-                style: pw.TextStyle(color: PdfColors.white, fontSize: 7.5, fontWeight: pw.FontWeight.bold)),
-          ),
-          pw.Spacer(),
-          pw.Container(
-            padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            color: bg,
-            child: pw.Text(_fmtAvg(row['avgAgainst'] as double),
-                style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9, color: _PdfColors.onColor(bg))),
-          ),
-        ]),
+      final avg = row['avgAgainst'] as double?;
+      rows.add(_statBar(
+        'AVG',
+        (row['pitchType'] as String),
+        avg == null ? 'N/A' : _fmtAvg(avg),
+        avg,
+        leading: pw.Container(
+          padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+          decoration: pw.BoxDecoration(color: _PdfColors.accent, borderRadius: pw.BorderRadius.circular(8)),
+          child: pw.Text((row['pitchType'] as String).toUpperCase(),
+              style: pw.TextStyle(color: PdfColors.white, fontSize: 8, fontWeight: pw.FontWeight.bold)),
+        ),
       ));
     }
     return _sectionCard('Their Approach', rows);

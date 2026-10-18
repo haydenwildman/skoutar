@@ -6,6 +6,7 @@ import '../widgets/skoutar_logo.dart';
 import '../utils/responsive.dart';
 import '../widgets/sidebar_nav.dart';
 import 'login_screen.dart';
+import 'pitcher_switcher_dialog.dart';
 import 'game_input_screen.dart';
 import 'overview_screen.dart';
 import 'pitch_breakdown_screen.dart';
@@ -16,12 +17,19 @@ import 'pitch_sequencing_screen.dart';
 import 'scouting_report_screen.dart';
 import 'edit_raw_data_screen.dart';
 import 'edit_at_bats_screen.dart';
+import '../bullpen/analysis_screen.dart';
+import '../bullpen/bullpen_screen.dart';
+import '../bullpen/repository.dart';
+import '../bullpen/store.dart';
 
 /// The authenticated shell of the app: persistent sidebar + a body that
 /// swaps between the feature screens, mirroring the R app's
 /// `sbNav()` / `.tab-page` show/hide behavior.
 class HomeShell extends StatefulWidget {
-  const HomeShell({super.key});
+  /// Where Bullpen / Game Mode data is saved. Defaults to Supabase; tests
+  /// pass an in-memory repository.
+  final BullpenRepository? bullpenRepository;
+  const HomeShell({super.key, this.bullpenRepository});
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -35,6 +43,42 @@ class _HomeShellState extends State<HomeShell> {
   // already inherently collapsible (open/close), so this only affects the
   // persistent side rail shown at >=900px width.
   bool _sidebarCollapsed = false;
+
+  /// Bullpen + Pitching Analysis state, shared by both tabs (so a plan made
+  /// on Pitching Analysis can be sent to Bullpen).
+  late final BullpenStore _bullpen;
+  late final AppSession _session;
+
+  @override
+  void initState() {
+    super.initState();
+    final session = context.read<AppSession>();
+    _session = session;
+    _bullpen = BullpenStore(
+      repo: widget.bullpenRepository ?? SupabaseBullpenRepository(),
+      userIdProvider: () => session.activePitcherId, // the ACTIVE pitcher
+    );
+    session.onActivePitcherChanged = () => _bullpen.reloadForPitcher();
+    _bullpen.addListener(_onBullpenChanged);
+    _bullpen.load();
+  }
+
+  /// "Send to Bullpen" asks the shell to switch tabs.
+  void _onBullpenChanged() {
+    final tab = _bullpen.navigateRequest;
+    if (tab != null) {
+      _bullpen.clearNavigateRequest();
+      if (mounted) setState(() => _selected = tab);
+    }
+  }
+
+  @override
+  void dispose() {
+    _session.onActivePitcherChanged = null;
+    _bullpen.removeListener(_onBullpenChanged);
+    _bullpen.dispose();
+    super.dispose();
+  }
 
   /// Looks up the same outline icon already used for this section in the
   /// sidebar, so every screen's top bar carries the "[ICON] PRIMARY TITLE"
@@ -68,6 +112,10 @@ class _HomeShellState extends State<HomeShell> {
         return const EditRawDataScreen();
       case 'Edit At-Bats':
         return const EditAtBatsScreen();
+      case 'Bullpen':
+        return const BullpenScreen();
+      case 'Pitching Analysis':
+        return const PitchingAnalysisScreen();
       default:
         return const GameInputScreen();
     }
@@ -75,6 +123,30 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
+    return ChangeNotifierProvider<BullpenStore>.value(
+      value: _bullpen,
+      child: Builder(builder: (ctx) {
+        final switching = ctx.watch<AppSession>().switchingPitcher;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            _buildShell(ctx),
+            // Blocks input while another pitcher's data loads, so nothing can
+            // be logged against the wrong pitcher mid-switch.
+            if (switching)
+              const Positioned.fill(
+                child: ColoredBox(
+                  color: Color(0x66000000),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              ),
+          ],
+        );
+      }),
+    );
+  }
+
+  Widget _buildShell(BuildContext context) {
     final session = context.watch<AppSession>();
     final isNarrow = MediaQuery.of(context).size.width < 900;
 
@@ -89,8 +161,8 @@ class _HomeShellState extends State<HomeShell> {
         if (isNarrow) _scaffoldKey.currentState?.closeDrawer();
       },
       isPlus: session.isPlus,
-      pitcherName:
-          session.currentUser?.pitcherDisplayName ?? session.currentUser?.username ?? '—',
+      pitcherName: session.activePitcherName,
+      onAccount: () => showPitcherSwitcher(context),
       onLogout: () async {
         await session.logout();
         if (!context.mounted) return;

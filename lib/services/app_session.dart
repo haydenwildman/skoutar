@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
+import '../models/pitcher.dart';
 import '../models/user.dart';
 import '../models/pitch_event.dart';
 import '../theme/app_theme.dart';
 import 'auth_service.dart';
+import 'pitcher_service.dart';
 import 'storage_service.dart';
 
 /// ══════════════════════════════════════════════════════════════
@@ -220,10 +222,12 @@ class AppSession extends ChangeNotifier {
   String pitchTypeLabel(String? key) {
     if (key == null || key.trim().isEmpty) return 'Other';
     final k = key.toLowerCase().trim();
+    // The pitcher's own names always win. The legacy names below only label
+    // old rows that were logged with the removed fb/cv/ch/sl presets.
+    if (customPitchTypeNames.containsKey(k)) return customPitchTypeNames[k]!;
     if (builtInPitchTypeFullNames.containsKey(k)) {
       return builtInPitchTypeFullNames[k]!;
     }
-    if (customPitchTypeNames.containsKey(k)) return customPitchTypeNames[k]!;
     // Older saved data may reference a pitch type key that predates full
     // display names (e.g. a short code typed before this feature existed).
     // Show it title-cased rather than leaving it blank or all-lowercase.
@@ -244,8 +248,30 @@ class AppSession extends ChangeNotifier {
   /// buttons are shown, mirroring how custom pitch types can be removed.
   List<String> hiddenBuiltInPitchTypes = [];
 
+  // ── Pitcher profiles (one login, several pitchers) ──────────────
+  // Every pitch, game, bullpen and setting belongs to the ACTIVE pitcher.
+  final PitcherService pitcherService = PitcherService();
+  List<Pitcher> pitchers = [];
+  Pitcher? activePitcher;
+
+  /// True while a different pitcher's data is being loaded.
+  bool switchingPitcher = false;
+
+  /// Set by the home shell so the Bullpen store reloads on a switch.
+  VoidCallback? onActivePitcherChanged;
+
+  /// Id every data read/write is keyed by. Falls back to the account id (the
+  /// account's first pitcher always shares it) only before pitchers load.
+  String get activePitcherId => activePitcher?.id ?? currentUser?.id ?? '';
+  String get activePitcherName =>
+      activePitcher?.displayName ?? currentUser?.pitcherDisplayName ?? '—';
+
+  int get pitcherLimit => currentUser?.maxPitchers ?? 1;
+  bool get canAddPitcher => pitchers.length < pitcherLimit;
+
   bool get isLoggedIn => currentUser != null;
-  bool get isPlus => currentUser?.isPlus ?? false;
+  /// Every plan includes every feature; nothing is locked.
+  bool get isPlus => true;
 
   /// True once the very first plate appearance of the lineup has
   /// completed. Before this, the batting order is still being bootstrapped
@@ -276,18 +302,62 @@ class AppSession extends ChangeNotifier {
 
   Future<void> login(AppUser user) async {
     currentUser = user;
-    pitches = await storage.loadPitchesForUser(user.id);
-    customPitchTypes = await storage.loadCustomPitchTypes(user.id);
-    hiddenBuiltInPitchTypes = await storage.loadHiddenBuiltInPitchTypes(user.id);
-    batterNames = await storage.loadBatterNames(user.id);
-    customPitchTypeNames = await storage.loadCustomPitchTypeNames(user.id);
-    final storedColors = await storage.loadCustomPitchTypeColors(user.id);
-    customPitchTypeColors =
-        storedColors.map((k, v) => MapEntry(k, Color(v)));
-    _syncPitchColors();
-    _undoStack.clear();
-    _restoreCountersFromHistory();
+    await refreshPitchers(keepActive: false);
+    await _loadActivePitcherData();
     notifyListeners();
+  }
+
+  /// Reloads the pitcher list. Keeps the same active pitcher if it still exists.
+  Future<void> refreshPitchers({bool keepActive = true}) async {
+    var list = await pitcherService.loadPitchers();
+    if (list.isEmpty) {
+      try {
+        await pitcherService.ensureDefaultPitcher();
+        list = await pitcherService.loadPitchers();
+      } catch (_) {}
+    }
+    pitchers = list;
+    final keepId = keepActive ? activePitcher?.id : null;
+    Pitcher? next;
+    for (final p in list) {
+      if (p.id == keepId) next = p;
+    }
+    activePitcher = next ?? (list.isNotEmpty ? list.first : null);
+    notifyListeners();
+  }
+
+  /// Loads the ACTIVE pitcher's games, pitches and settings, replacing
+  /// whatever was in memory (nothing from another pitcher is kept).
+  Future<void> _loadActivePitcherData() async {
+    final id = activePitcherId;
+    pitches = await storage.loadPitchesForUser(id);
+    customPitchTypes = await storage.loadCustomPitchTypes(id);
+    hiddenBuiltInPitchTypes = await storage.loadHiddenBuiltInPitchTypes(id);
+    batterNames = await storage.loadBatterNames(id);
+    customPitchTypeNames = await storage.loadCustomPitchTypeNames(id);
+    final storedColors = await storage.loadCustomPitchTypeColors(id);
+    customPitchTypeColors = storedColors.map((k, v) => MapEntry(k, Color(v)));
+    _syncPitchColors();
+    selectedYear = null;
+    _resetLiveState(); // a game in progress belongs to the previous pitcher
+    _restoreCountersFromHistory();
+  }
+
+  /// Makes [p] the active pitcher everywhere in the app. All data is cleared
+  /// and re-loaded for that pitcher before anything can be saved again.
+  Future<void> switchPitcher(Pitcher p) async {
+    if (p.id == activePitcher?.id || switchingPitcher) return;
+    switchingPitcher = true;
+    notifyListeners();
+    try {
+      activePitcher = p;
+      pitches = []; // never show or save the previous pitcher's data
+      await _loadActivePitcherData();
+      onActivePitcherChanged?.call();
+    } finally {
+      switchingPitcher = false;
+      notifyListeners();
+    }
   }
 
   /// Clears local session state AND signs out of Supabase (otherwise the
@@ -296,6 +366,9 @@ class AppSession extends ChangeNotifier {
   Future<void> logout() async {
     await auth.logout();
     currentUser = null;
+    pitchers = [];
+    activePitcher = null;
+    switchingPitcher = false;
     pitches = [];
     customPitchTypes = [];
     hiddenBuiltInPitchTypes = [];
@@ -413,7 +486,7 @@ class AppSession extends ChangeNotifier {
   /// correction to an in-progress game, not the start of a new one.
   Future<void> editCurrentGameInfo(
       String newOpponent, int newGameNumber, int newSeason) async {
-    if (currentUser == null) return;
+    if (currentUser == null || switchingPitcher) return;
     final oldOpponent = currentOpponent;
     final oldGameNumber = currentGameNumber;
     final oldSeason = currentSeason;
@@ -434,7 +507,7 @@ class AppSession extends ChangeNotifier {
     currentOpponent = newOpponent;
     currentGameNumber = newGameNumber;
     currentSeason = newSeason;
-    await storage.savePitchesForUser(currentUser!.id, pitches);
+    await storage.savePitchesForUser(activePitcherId, pitches);
     notifyListeners();
   }
 
@@ -530,14 +603,14 @@ class AppSession extends ChangeNotifier {
   /// own reference (never used in any stat calculation). Persists across
   /// games for this user.
   Future<void> setBatterName(int jersey, String name) async {
-    if (currentUser == null) return;
+    if (currentUser == null || switchingPitcher) return;
     final trimmed = name.trim();
     if (trimmed.isEmpty) {
       batterNames.remove(jersey);
     } else {
       batterNames[jersey] = trimmed;
     }
-    await storage.saveBatterNames(currentUser!.id, batterNames);
+    await storage.saveBatterNames(activePitcherId, batterNames);
     notifyListeners();
   }
 
@@ -575,15 +648,14 @@ class AppSession extends ChangeNotifier {
   /// Adds a new user-defined pitch type (e.g. typing "Knuckleball") and
   /// persists it, along with its display name and — if given — its color.
   /// The full name is entered with no artificial character limit (unlike
-  /// the old short-code system). Ignores blanks and duplicates of the
-  /// built-in fb/cv/ch/sl types. Returns the key the pitch was stored
-  /// under, or null if the name was rejected (blank or a built-in).
+  /// the old short-code system). There are no preset pitches, so every
+  /// pitch type is one the person created. Returns the key the pitch was
+  /// stored under, or null if the name was blank.
   Future<String?> addCustomPitchType(String name, {Color? color}) async {
-    if (currentUser == null) return null;
+    if (currentUser == null || switchingPitcher) return null;
     final trimmedName = name.trim();
     if (trimmedName.isEmpty) return null;
     final key = trimmedName.toLowerCase();
-    if (builtInPitchTypeFullNames.containsKey(key)) return null;
     if (!customPitchTypes.contains(key)) {
       customPitchTypes.add(key);
     }
@@ -592,10 +664,10 @@ class AppSession extends ChangeNotifier {
       customPitchTypeColors[key] = color;
       _syncPitchColors();
     }
-    await storage.saveCustomPitchTypes(currentUser!.id, customPitchTypes);
-    await storage.saveCustomPitchTypeNames(currentUser!.id, customPitchTypeNames);
+    await storage.saveCustomPitchTypes(activePitcherId, customPitchTypes);
+    await storage.saveCustomPitchTypeNames(activePitcherId, customPitchTypeNames);
     await storage.saveCustomPitchTypeColors(
-        currentUser!.id, customPitchTypeColors.map((k, v) => MapEntry(k, v.value)));
+        activePitcherId, customPitchTypeColors.map((k, v) => MapEntry(k, v.value)));
     notifyListeners();
     return key;
   }
@@ -605,12 +677,12 @@ class AppSession extends ChangeNotifier {
   /// history, breakdown — since every screen reads through
   /// [AppColors.pitchColor], which is kept in sync via [_syncPitchColors].
   Future<void> setCustomPitchTypeColor(String key, Color color) async {
-    if (currentUser == null) return;
+    if (currentUser == null || switchingPitcher) return;
     final k = key.toLowerCase().trim();
     customPitchTypeColors[k] = color;
     _syncPitchColors();
     await storage.saveCustomPitchTypeColors(
-        currentUser!.id, customPitchTypeColors.map((k, v) => MapEntry(k, v.value)));
+        activePitcherId, customPitchTypeColors.map((k, v) => MapEntry(k, v.value)));
     notifyListeners();
   }
 
@@ -619,10 +691,10 @@ class AppSession extends ChangeNotifier {
   /// the button — [pitchTypeLabel] and [AppColors.pitchColor] still resolve
   /// it consistently for anything already saved).
   Future<void> removeCustomPitchType(String code) async {
-    if (currentUser == null) return;
+    if (currentUser == null || switchingPitcher) return;
     final key = code.toLowerCase().trim();
     customPitchTypes.remove(key);
-    await storage.saveCustomPitchTypes(currentUser!.id, customPitchTypes);
+    await storage.saveCustomPitchTypes(activePitcherId, customPitchTypes);
     notifyListeners();
   }
 
@@ -631,21 +703,21 @@ class AppSession extends ChangeNotifier {
   /// their data — this is purely a display preference, same as removing a
   /// custom pitch type.
   Future<void> hideBuiltInPitchType(String code) async {
-    if (currentUser == null) return;
+    if (currentUser == null || switchingPitcher) return;
     final c = code.trim().toUpperCase();
     if (!hiddenBuiltInPitchTypes.contains(c)) {
       hiddenBuiltInPitchTypes.add(c);
       await storage.saveHiddenBuiltInPitchTypes(
-          currentUser!.id, hiddenBuiltInPitchTypes);
+          activePitcherId, hiddenBuiltInPitchTypes);
       notifyListeners();
     }
   }
 
   /// Restores every previously-hidden built-in pitch type button.
   Future<void> restoreBuiltInPitchTypes() async {
-    if (currentUser == null) return;
+    if (currentUser == null || switchingPitcher) return;
     hiddenBuiltInPitchTypes = [];
-    await storage.saveHiddenBuiltInPitchTypes(currentUser!.id, hiddenBuiltInPitchTypes);
+    await storage.saveHiddenBuiltInPitchTypes(activePitcherId, hiddenBuiltInPitchTypes);
     notifyListeners();
   }
 
@@ -661,7 +733,7 @@ class AppSession extends ChangeNotifier {
     String? battedType,
     double er = 0,
   }) async {
-    if (currentUser == null) {
+    if (currentUser == null || switchingPitcher) {
       return PitchAddResult(endedAB: false, nextBattingOrder: battingOrderSlot);
     }
     _undoStack.add(_captureSnapshot());
@@ -719,7 +791,7 @@ class AppSession extends ChangeNotifier {
 
     final ev = PitchEvent(
       id: _uuid.v4(),
-      userId: currentUser!.id,
+      userId: activePitcherId,
       game: currentOpponent,
       gameNumber: currentGameNumber,
       batter: completedPAs,
@@ -743,7 +815,7 @@ class AppSession extends ChangeNotifier {
     );
 
     pitches.add(ev);
-    await storage.savePitchesForUser(currentUser!.id, pitches);
+    await storage.savePitchesForUser(activePitcherId, pitches);
 
     if (outs >= 3) {
       outs = 0;
@@ -802,14 +874,14 @@ class AppSession extends ChangeNotifier {
     required String outcome,
     required bool recordsOut,
   }) async {
-    if (currentUser == null) return;
+    if (currentUser == null || switchingPitcher) return;
     _undoStack.add(_captureSnapshot());
     if (recordsOut) {
       outs = (outs + 1).clamp(0, 3);
     }
     final ev = PitchEvent(
       id: _uuid.v4(),
-      userId: currentUser!.id,
+      userId: activePitcherId,
       game: currentOpponent,
       gameNumber: currentGameNumber,
       batter: completedPAs,
@@ -832,7 +904,7 @@ class AppSession extends ChangeNotifier {
       season: currentSeason,
     );
     pitches.add(ev);
-    await storage.savePitchesForUser(currentUser!.id, pitches);
+    await storage.savePitchesForUser(activePitcherId, pitches);
     // If this PO/CS was the third out of the inning, the frame ends but the
     // plate appearance does not: the same batter leads off next inning, so
     // the count resets to 0-0 while Batters Faced and the batting order stay
@@ -882,11 +954,11 @@ class AppSession extends ChangeNotifier {
   /// piece of live game state exactly, not just an approximation
   /// recomputed after the fact.
   Future<void> undoLastPitch() async {
-    if (currentUser == null || pitches.isEmpty) return;
+    if (currentUser == null || switchingPitcher || pitches.isEmpty) return;
     if (_undoStack.isNotEmpty) {
       final snap = _undoStack.removeLast();
       pitches.removeLast();
-      await storage.savePitchesForUser(currentUser!.id, pitches);
+      await storage.savePitchesForUser(activePitcherId, pitches);
       currentOpponent = snap.currentOpponent;
       currentGameNumber = snap.currentGameNumber;
       currentSeason = snap.currentSeason;
@@ -906,7 +978,7 @@ class AppSession extends ChangeNotifier {
       // Game Input in this session) — fall back to removing the row and
       // recomputing what can be recomputed from the saved log.
       pitches.removeLast();
-      await storage.savePitchesForUser(currentUser!.id, pitches);
+      await storage.savePitchesForUser(activePitcherId, pitches);
       _restoreCountersFromHistory();
     }
     notifyListeners();
@@ -917,9 +989,9 @@ class AppSession extends ChangeNotifier {
   /// strikes, outs, batting order), unlike [addPitch]. Always appends to
   /// the end of the log; see [insertPitchAt] to insert somewhere else.
   Future<void> addManualPitch(PitchEvent event) async {
-    if (currentUser == null) return;
+    if (currentUser == null || switchingPitcher) return;
     pitches.add(event);
-    await storage.savePitchesForUser(currentUser!.id, pitches);
+    await storage.savePitchesForUser(activePitcherId, pitches);
     _undoStack.clear();
     _restoreCountersFromHistory();
     notifyListeners();
@@ -929,19 +1001,19 @@ class AppSession extends ChangeNotifier {
   /// appending — lets Edit Raw Data insert a row anywhere in the log, e.g.
   /// between two existing rows, not just at the end.
   Future<void> insertPitchAt(int index, PitchEvent event) async {
-    if (currentUser == null) return;
+    if (currentUser == null || switchingPitcher) return;
     final at = index.clamp(0, pitches.length);
     pitches.insert(at, event);
-    await storage.savePitchesForUser(currentUser!.id, pitches);
+    await storage.savePitchesForUser(activePitcherId, pitches);
     _undoStack.clear();
     _restoreCountersFromHistory();
     notifyListeners();
   }
 
   Future<void> deletePitchAt(int index) async {
-    if (currentUser == null) return;
+    if (currentUser == null || switchingPitcher) return;
     pitches.removeAt(index);
-    await storage.savePitchesForUser(currentUser!.id, pitches);
+    await storage.savePitchesForUser(activePitcherId, pitches);
     _undoStack.clear();
     _restoreCountersFromHistory();
     notifyListeners();
@@ -952,18 +1024,18 @@ class AppSession extends ChangeNotifier {
   /// Row", everything. There's no separate "user-created" bucket; the
   /// pitch log is a single list, so this clears all of it.
   Future<void> deleteAllPitches() async {
-    if (currentUser == null) return;
+    if (currentUser == null || switchingPitcher) return;
     pitches = [];
-    await storage.savePitchesForUser(currentUser!.id, pitches);
+    await storage.savePitchesForUser(activePitcherId, pitches);
     _undoStack.clear();
     _restoreCountersFromHistory();
     notifyListeners();
   }
 
   Future<void> updatePitchAt(int index, PitchEvent updated) async {
-    if (currentUser == null) return;
+    if (currentUser == null || switchingPitcher) return;
     pitches[index] = updated;
-    await storage.savePitchesForUser(currentUser!.id, pitches);
+    await storage.savePitchesForUser(activePitcherId, pitches);
     // Editing an at-bat/pitch never creates or removes a plate appearance,
     // so this is just keeping the live game-state fields (opponent, batting
     // order, completedPAs, etc.) in sync with the edited data — it can
@@ -975,9 +1047,9 @@ class AppSession extends ChangeNotifier {
   }
 
   Future<void> replaceAllPitches(List<PitchEvent> newPitches) async {
-    if (currentUser == null) return;
+    if (currentUser == null || switchingPitcher) return;
     pitches = newPitches;
-    await storage.savePitchesForUser(currentUser!.id, pitches);
+    await storage.savePitchesForUser(activePitcherId, pitches);
     _undoStack.clear();
     _restoreCountersFromHistory();
     notifyListeners();

@@ -9,15 +9,13 @@ import '../services/scouting_report_data.dart';
 import '../services/scouting_pdf_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glow.dart';
+import '../widgets/scouting_plan_sections.dart';
 import '../utils/responsive.dart';
 import '../widgets/stat_vbox.dart';
 import '../widgets/stat_hold_info.dart';
 import '../services/color_guides.dart';
 import '../widgets/baseball_field_painter.dart';
 import '../widgets/year_filter_dropdown.dart';
-import '../services/opponent_plan_service.dart';
-import '../widgets/opponent_plan_sections.dart';
-import 'plus_lock_card.dart';
 
 class ScoutingReportScreen extends StatefulWidget {
   const ScoutingReportScreen({super.key});
@@ -56,9 +54,6 @@ class _ScoutingReportScreenState extends State<ScoutingReportScreen> {
   @override
   Widget build(BuildContext context) {
     final session = context.watch<AppSession>();
-    if (!session.isPlus) {
-      return const PlusLockCard(feature: 'Scouting Reports');
-    }
     final teams = session.knownTeams;
     final gameNums = [
       'All',
@@ -122,6 +117,7 @@ class _ScoutingReportScreenState extends State<ScoutingReportScreen> {
         if (_generated && _team != null)
           Builder(builder: (context) => _ScoutingReportBody(
                 team: _team!,
+                history: session.filteredPitches,
                 data: () {
                   var data = session.filteredPitches.where((p) => p.game == _team).toList();
                   if (_gameNum != 'All') {
@@ -147,7 +143,8 @@ class _ScoutingReportScreenState extends State<ScoutingReportScreen> {
 class _ScoutingReportBody extends StatefulWidget {
   final String team;
   final List<PitchEvent> data;
-  const _ScoutingReportBody({required this.team, required this.data});
+  final List<PitchEvent> history;
+  const _ScoutingReportBody({required this.team, required this.data, required this.history});
 
   @override
   State<_ScoutingReportBody> createState() => _ScoutingReportBodyState();
@@ -175,7 +172,7 @@ class _ScoutingReportBodyState extends State<_ScoutingReportBody> {
 
   @override
   Widget build(BuildContext context) {
-    final r = ScoutingReportData.compute(widget.team, widget.data);
+    final r = ScoutingReportData.compute(widget.team, widget.data, history: widget.history);
     final stats = r.stats;
     final gameTrend = r.gameTrend;
     final cd = r.cd;
@@ -195,8 +192,6 @@ class _ScoutingReportBodyState extends State<_ScoutingReportBody> {
     final breakdown = r.breakdown;
     final approach = r.approach;
     final topDamage = r.topDamage;
-    // Extra game-plan sections (takeaways, hitter reports, situational, review).
-    final plan = OpponentPlan.compute(widget.data, seqs: r.seqs);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -253,6 +248,41 @@ class _ScoutingReportBodyState extends State<_ScoutingReportBody> {
                         style: TextStyle(color: threatTc, fontWeight: FontWeight.w900, fontSize: 12)),
                     ),
                   ),
+                ]),
+                const SizedBox(height: 10),
+                // Headline numbers: ERA / WHIP / AVG Against / SLG Against.
+                ResponsiveRow(stackedColumns: 2, stackedGap: 8, children: [
+                  Expanded(
+                      child: StatSummaryCard(
+                          label: 'ERA',
+                          value: stats.era?.toStringAsFixed(2) ?? 'N/A',
+                          statKey: 'ERA',
+                          rawValue: stats.era,
+                          description: 'Calculation: (Earned Runs ÷ Innings Pitched) × 9\n\nRuns the pitcher allows per nine innings against this opponent. Lower is better.')),
+                  const SizedBox(width: 8),
+                  Expanded(
+                      child: StatSummaryCard(
+                          label: 'WHIP',
+                          value: stats.whip?.toStringAsFixed(2) ?? 'N/A',
+                          statKey: 'WHIP',
+                          rawValue: stats.whip,
+                          description: 'Calculation: (Walks + Hits) ÷ Innings Pitched\n\nBaserunners allowed per inning against this opponent. Lower is better.')),
+                  const SizedBox(width: 8),
+                  Expanded(
+                      child: StatSummaryCard(
+                          label: 'AVG Against',
+                          value: stats.avg != null ? _fmtAvg(stats.avg!) : 'N/A',
+                          statKey: 'AVG',
+                          rawValue: stats.avg,
+                          description: _scoutingInfo['AVG'])),
+                  const SizedBox(width: 8),
+                  Expanded(
+                      child: StatSummaryCard(
+                          label: 'SLG Against',
+                          value: stats.slg != null ? _fmtAvg(stats.slg!) : 'N/A',
+                          statKey: 'SLG',
+                          rawValue: stats.slg,
+                          description: 'Calculation: Total Bases ÷ At-Bats\n\nPower this opponent shows against you; extra-base hits count for more. Lower is better.')),
                 ]),
                 const SizedBox(height: 10),
                 ResponsiveRow(stackedColumns: 3, children: [
@@ -361,7 +391,9 @@ class _ScoutingReportBodyState extends State<_ScoutingReportBody> {
             ),
           ),
         ),
-        OpponentTakeaways(plan: plan),
+        // ── Game Overview + Key Takeaways (added) ─────────────────
+        PlanOverviewCard(r),
+        KeyTakeawaysCard(r.plan),
         // ── What Works / What Gets Hit ────────────────────────────
         ResponsiveRow(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Expanded(
@@ -508,8 +540,9 @@ class _ScoutingReportBodyState extends State<_ScoutingReportBody> {
             ),
           ),
         ]),
-        OpponentTeamTendencies(plan: plan),
-        OpponentPitchStrategy(plan: plan),
+        // ── Team Tendencies + Pitch Selection Strategy (added) ────
+        TeamTendenciesCard(r.plan),
+        PitchStrategyCard(r),
         // ── Best Hitters ───────────────────────────────────────────
         GlowCard(
           child: Padding(
@@ -529,8 +562,10 @@ class _ScoutingReportBodyState extends State<_ScoutingReportBody> {
             ),
           ),
         ),
-        OpponentLineupBreakdown(plan: plan),
-        OpponentHitterReports(plan: plan),
+        // ── Lineup, hitter reports, situations (added) ────────────
+        LineupBreakdownCard(r.plan),
+        HitterReportsCard(r.plan),
+        SituationalPlanCard(r.plan),
         // ── Spray chart + Adjustment Notes ────────────────────────
         ResponsiveRow(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Expanded(
@@ -640,8 +675,8 @@ class _ScoutingReportBodyState extends State<_ScoutingReportBody> {
             ),
           ),
         ]),
-        OpponentSituational(plan: plan),
-        OpponentMatchupReview(plan: plan),
+        // ── Previous Matchup Review (added) ───────────────────────
+        MatchupReviewCard(r),
       ],
     );
   }

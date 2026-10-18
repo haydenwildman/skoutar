@@ -127,6 +127,8 @@ void main() {
       'Game Logs',
       'Edit Raw Data',
       'Edit At-Bats',
+      'Bullpen',
+      'Pitching Analysis',
     ];
     for (final w in _widths) {
       testWidgets('every free screen renders without errors at ${w.toInt()}px', (tester) async {

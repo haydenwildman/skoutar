@@ -44,7 +44,7 @@ class ValueBar extends StatelessWidget {
         final track = constraints.maxWidth;
         final frac = fraction.isNaN ? 0.0 : fraction.clamp(0.0, 1.0);
         // Rough label width: bold digits/letters ~0.62em, plus side padding.
-        final need = text.length * fontSize * 0.62 + 20;
+        final need = text.isEmpty ? 0.0 : text.length * fontSize * 0.62 + 20;
         final fill = (track * frac).clamp(0.0, track).toDouble();
         final labelInside = fill >= need;
         return Stack(
@@ -66,7 +66,7 @@ class ValueBar extends StatelessWidget {
                     color: color,
                     borderRadius: BorderRadius.circular(radius),
                   ),
-                  child: labelInside
+                  child: (labelInside && text.isNotEmpty)
                       ? Text(
                           text,
                           maxLines: 1,
@@ -77,7 +77,7 @@ class ValueBar extends StatelessWidget {
                       : null,
                 ),
               ),
-            if (!labelInside)
+            if (!labelInside && text.isNotEmpty)
               Positioned(
                 left: fill + 6,
                 right: 4,

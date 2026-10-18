@@ -351,7 +351,6 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
           ),
         ),
         Builder(builder: (context) {
-          if (!session.isPlus) return const SizedBox.shrink();
           final cd = StatsService.countApproach(data);
           final gcs = StatsService.groupedCountStats(data);
           return GlowCard(

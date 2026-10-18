@@ -25,7 +25,6 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
   static const _uuid = Uuid();
   static const handOptions = ['L', 'R', 'S'];
   static const eventTypeOptions = ['pitch', 'po', 'to', 'txo', 'bk'];
-  static const _builtInPitchTypes = ['fb', 'cv', 'ch', 'sl'];
   static const callOptions = ['b', 'ss', 'sl', 'f', 'ip', 'hbp', 'dk'];
   static const outcomeOptions = [
     '', '1b', '2b', '3b', 'hr', 'go', 'fo', 'lo', 'dp', 'e', 'fc', 'bb',
@@ -41,15 +40,17 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
     final session = context.read<AppSession>();
     final isNew = existing == null;
 
-    // Built-in codes + any custom pitch buttons the user has added + any
-    // pitch type codes already present in the data (covers legacy 'other'
-    // rows or custom codes typed before this dropdown existed).
+    // The pitcher's own custom pitch types + any pitch type codes already
+    // present in the data (covers rows logged before presets were removed).
     final pitchTypeOptions = <String>{
-      ..._builtInPitchTypes,
       ...session.customPitchTypes.map((c) => c.toLowerCase()),
       ...session.pitches.map((p) => (p.pitchType ?? '').toLowerCase()).where((s) => s.isNotEmpty),
     }.toList()
       ..sort();
+
+    // No presets exist, so a pitcher with no pitch types yet gets "(none)".
+    final startingPitchType = existing?.pitchType ?? (pitchTypeOptions.isNotEmpty ? pitchTypeOptions.first : '');
+    if (!pitchTypeOptions.contains(startingPitchType)) pitchTypeOptions.insert(0, startingPitchType);
 
     final gameCtrl = TextEditingController(text: existing?.game ?? session.currentOpponent);
     final gameNumCtrl = TextEditingController(text: '${existing?.gameNumber ?? session.currentGameNumber}');
@@ -63,7 +64,7 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
 
     String hand = existing?.hand ?? 'R';
     String eventType = existing?.eventType ?? 'pitch';
-    String pitchType = existing?.pitchType ?? 'fb';
+    String pitchType = startingPitchType;
     String call = existing?.call ?? 'ip';
     String outcome = existing?.outcome ?? '';
 
@@ -125,7 +126,7 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
               onPressed: () async {
                 final event = PitchEvent(
                   id: existing?.id ?? _uuid.v4(),
-                  userId: session.currentUser!.id,
+                  userId: session.activePitcherId,
                   game: gameCtrl.text.trim().isEmpty ? 'Unknown' : gameCtrl.text.trim(),
                   gameNumber: int.tryParse(gameNumCtrl.text) ?? 1,
                   batter: int.tryParse(batterCtrl.text) ?? 1,
@@ -536,10 +537,9 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
     final session = context.watch<AppSession>();
     final data = session.pitches;
 
-    // Same option set the Add/Edit dialog uses (built-ins + custom pitch
-    // buttons + any pitch type already in the data).
+    // Same option set the Add/Edit dialog uses (custom pitch types + any
+    // pitch type already in the data).
     final pitchTypeOptions = <String>{
-      ..._builtInPitchTypes,
       ...session.customPitchTypes.map((c) => c.toLowerCase()),
       ...data.map((p) => (p.pitchType ?? '').toLowerCase()).where((s) => s.isNotEmpty),
     }.toList()

@@ -11,7 +11,6 @@ import '../services/color_guides.dart';
 import '../widgets/year_filter_dropdown.dart';
 import '../widgets/sequence_breakdown.dart';
 import '../services/sequence_scoring.dart';
-import 'plus_lock_card.dart';
 
 const String _seqScoreWhat =
     'Score (0-100) rates the pitch-calling DECISIONS in the at-bats that opened this way (average of each at-bat\'s score), using only logged data - no velocity or location.\n'
@@ -41,9 +40,6 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
   @override
   Widget build(BuildContext context) {
     final session = context.watch<AppSession>();
-    if (!session.isPlus) {
-      return const PlusLockCard(feature: 'Pitch Sequencing');
-    }
     var data = session.filteredPitches;
     if (_team != 'All') data = data.where((p) => p.game == _team).toList();
     if (_gameNum != 'All') {
@@ -296,7 +292,7 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
                       child: _PitchBarRow(
                         pitchType: p['pitchType'] as String,
                         pct: p['pct'] as double,
-                        detail: '${p['pct']}% (${p['count']}/${p['ofTotal']} K)',
+                        detail: '${p['count']}/${p['ofTotal']} K',
                         title: 'Put-Away Pitch',
                         what: 'Of all strikeouts, the share that ended on this pitch type (strikeouts finished with it ÷ total strikeouts). The bar fills from 0% to 100%.',
                       ),
@@ -322,7 +318,7 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
                       child: _PitchBarRow(
                         pitchType: p['pitchType'] as String,
                         pct: p['pct'] as double,
-                        detail: '${p['pct']}% (${p['count']}/${p['ofTotal']} 1st pitches)',
+                        detail: '${p['count']}/${p['ofTotal']} 1st pitches',
                         title: 'First-Pitch Strike %',
                         what: 'How often this pitch type was a strike when thrown as the first pitch of a plate appearance (first-pitch strikes ÷ first pitches of that type). The bar fills from 0% to 100%.',
                         statKey: 'f_strike',
@@ -405,41 +401,64 @@ class _PitchBarRow extends StatelessWidget {
     return StatHoldInfo(
       title: '$title · ${pitchType.toUpperCase()}',
       description: composeHoldInfo(what: what, colorGuide: guide),
-      child: Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        ConstrainedBox(
-          constraints: const BoxConstraints(minWidth: 56, maxWidth: 104),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(16)),
-            child: Text(
-              pitchType.toUpperCase(),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Header row: pitch tag on the left, the actual % large on the right.
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                ConstrainedBox(
+                  constraints: const BoxConstraints(minWidth: 56, maxWidth: 104),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                    decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(16)),
+                    child: Text(
+                      pitchType.toUpperCase(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      '$pct%',
+                      maxLines: 1,
+                      softWrap: false,
+                      style: TextStyle(
+                        fontSize: statValueFontSize(context),
+                        fontWeight: FontWeight.w900,
+                        height: 1.1,
+                        color: AppColors.ink,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              LinearProgressIndicator(
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(7),
+              child: LinearProgressIndicator(
                 value: (pct / 100).clamp(0.0, 1.0),
                 minHeight: 14,
                 backgroundColor: AppColors.colBorder,
                 color: color,
               ),
-              const SizedBox(height: 3),
-              Text(detail, style: const TextStyle(fontSize: 12, color: AppColors.colText)),
-            ],
-          ),
+            ),
+            const SizedBox(height: 4),
+            Text(detail, style: const TextStyle(fontSize: 11.5, color: AppColors.colMuted)),
+          ],
         ),
-      ],
-    ),
+      ),
     );
   }
 }

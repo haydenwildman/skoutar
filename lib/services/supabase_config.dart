@@ -6,20 +6,37 @@ export 'package:supabase_flutter/supabase_flutter.dart';
 /// ══════════════════════════════════════════════════════════════
 /// SUPABASE CONFIG
 ///
-/// The anon/public key below is SAFE to ship in the app — it has no
-/// power on its own; every table it touches is locked down by Row
-/// Level Security policies (see supabase_schema.sql). Never put the
-/// service_role/secret key here or anywhere else in this app — that
-/// key bypasses RLS entirely and must only ever live on Supabase's
-/// servers, never in this app.
+/// The project URL is the SKOUTAR project (xmzdwoqvnnwhbnntziuk), the one every
+/// migration in this repo is run against.
+///
+/// The anon/publishable key is NOT stored in the source. It is public by design
+/// (every table is locked down by Row Level Security), but keeping it out of the
+/// repo means a key can be rotated without a code change and a key for the wrong
+/// project can never be committed by accident. Supply it at build/run time:
+///
+///   flutter run -d windows --dart-define=SUPABASE_ANON_KEY=<anon/publishable key>
+///   flutter build web      --dart-define=SUPABASE_ANON_KEY=<anon/publishable key>
+///
+/// Find it in the Supabase dashboard: Project Settings -> API (copy the anon /
+/// publishable key of project xmzdwoqvnnwhbnntziuk). NEVER use the service_role /
+/// secret key here: it bypasses RLS and must only live on Supabase's servers.
 /// ══════════════════════════════════════════════════════════════
-const supabaseUrl = 'https://xuqrmsjiftjwlhoqekpi.supabase.co';
-const supabaseAnonKey =
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh1cXJtc2ppZnRqd2xob3Fla3BpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkwODcyMTQsImV4cCI6MjEwNDY2MzIxNH0.VGM3pUe2i22wP9pAl74Tvz5nDKw7MLdm7GEQFZ91xDM';
+const supabaseUrl = String.fromEnvironment(
+  'SUPABASE_URL',
+  defaultValue: 'https://xmzdwoqvnnwhbnntziuk.supabase.co',
+);
+const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
 
 /// Call once at app startup, before runApp(). Sets up the singleton
 /// accessed everywhere else via `Supabase.instance.client`.
 Future<void> initSupabase() async {
+  if (supabaseAnonKey.isEmpty) {
+    throw StateError(
+      'SUPABASE_ANON_KEY was not provided. Run with '
+      '--dart-define=SUPABASE_ANON_KEY=<anon/publishable key of $supabaseUrl>.',
+    );
+  }
+  assert(!supabaseAnonKey.startsWith('sb_secret_'), 'A secret key must never be used in the app.');
   await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
 }
 

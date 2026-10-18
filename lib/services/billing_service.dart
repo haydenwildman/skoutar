@@ -1,91 +1,42 @@
-import '../models/user.dart';
-
 /// ══════════════════════════════════════════════════════════════
-/// BILLING — INTEGRATION POINT
+/// BILLING — INTEGRATION POINT (no payments are active)
 ///
-/// This app has NO real payment processing wired in yet, on purpose:
-/// charging real money requires a backend you control (to verify
-/// payments via webhooks) plus a registered Stripe account and/or
-/// Apple/Google developer accounts. None of that can be fabricated
-/// client-side, and a client can never be trusted to self-report
-/// "I paid" — that must be verified server-side.
+/// Nothing in this app charges money or marks anyone as having paid.
+/// Choosing a plan at sign-up only records WHICH plan was picked
+/// (`user_subscriptions`, status 'trialing' if the plan has a trial_days value,
+/// otherwise 'pending'). What a person can access is decided on the server by
+/// `get_my_entitlement()`; the client can never self-report "I paid".
 ///
-/// This file is the single place to plug in real billing later:
-///   - Web / Windows  -> Stripe Checkout + a backend webhook endpoint
-///   - iOS / Android  -> RevenueCat (wraps Apple/Google In-App Purchase)
+/// Prices, trial length and member limits live in `subscription_plans`
+/// (editable in Supabase), not in app code.
 ///
-/// Recommended architecture:
-///   1. User taps "Upgrade" in the app.
-///   2. App calls startCheckout() below.
-///   3. That opens a Stripe Checkout URL (web/desktop) or triggers a
-///      RevenueCat purchase flow (iOS/Android).
-///   4. Stripe/RevenueCat notifies YOUR backend via webhook when the
-///      payment succeeds, renews, or is canceled.
-///   5. Your backend — not this app — updates the user's `tier` and
-///      `status` in the real database (see AuthService.adminUpdateUser
-///      for the equivalent local-storage version of that same update).
-///   6. The app polls or listens for that updated status and unlocks
-///      Plus features (see AppSession.isPlus).
+/// To add real billing later, keep the same shape:
+///   1. App asks YOUR backend to start checkout for a plan id.
+///   2. Web/desktop -> Stripe Checkout; iOS -> Apple In-App Purchase;
+///      Android -> Google Play Billing (often via RevenueCat). Apple and Google
+///      require their own billing for digital subscriptions sold in their apps —
+///      a web checkout does NOT automatically satisfy store rules.
+///   3. The provider calls a WEBHOOK (Supabase Edge Function). It must verify
+///      the provider's signature, then use the service-role key (server-side
+///      only) to update `user_subscriptions` (status, current_period_end,
+///      billing_provider / billing_customer_id / billing_subscription_id).
+///   4. The app just re-reads get_my_entitlement().
 ///
-/// Until that's wired up, AuthService.signUp() marks new accounts as
-/// SubStatus.active immediately so the rest of the app (and this demo)
-/// works end-to-end. Flip that once real billing is live — see the
-/// comment in auth_service.dart's signUp() method.
+/// The service-role key and any payment-provider secret key must never be put
+/// in Flutter code, GitHub, or the public website.
 /// ══════════════════════════════════════════════════════════════
-
-/// Centralized pricing — change these two numbers and every screen
-/// that displays a price (signup, etc.) should
-/// read from here instead of hardcoding strings.
-class PricingConfig {
-  static const double basicMonthlyPriceUsd = 4.99;
-  static const double plusMonthlyPriceUsd = 9.99;
-
-  static String priceLabel(UserTier tier) {
-    switch (tier) {
-      case UserTier.basic:
-        return '\$${basicMonthlyPriceUsd.toStringAsFixed(2)} / month';
-      case UserTier.plus:
-        return '\$${plusMonthlyPriceUsd.toStringAsFixed(2)} / month';
-      case UserTier.admin:
-        return 'N/A';
-    }
-  }
-}
-
-/// Stub — replace the TODOs with real Stripe/RevenueCat calls.
 class BillingService {
-  /// Kick off a checkout flow for [tier]. On web/desktop this should
-  /// open a Stripe Checkout session URL (created by your backend, which
-  /// holds your secret API key — never put a Stripe secret key in the
-  /// client). On iOS/Android, this should trigger a RevenueCat purchase.
-  Future<void> startCheckout({
-    required String userId,
-    required UserTier tier,
-  }) async {
-    // TODO(web/desktop): call your backend to create a Stripe Checkout
-    // Session for PricingConfig.priceLabel(tier), then launch the
-    // returned session URL, e.g. with url_launcher:
-    //   final url = await myBackend.createCheckoutSession(userId, tier);
-    //   await launchUrl(Uri.parse(url));
-    //
-    // TODO(iOS/Android): call Purchases.purchasePackage(...) via the
-    // `purchases_flutter` (RevenueCat) package, using an entitlement
-    // that matches `tier`.
+  /// Kick off checkout for [planId]. Not implemented on purpose.
+  Future<void> startCheckout({required String planId}) async {
     throw UnimplementedError(
-      'Wire this up to Stripe (web/desktop) or RevenueCat (iOS/Android) '
-      'before calling startCheckout() in production.',
+      'Billing is not active. Wire this to a backend-created Stripe Checkout '
+      'session (web/desktop) or store billing (iOS/Android) first.',
     );
   }
 
-  /// Re-sync entitlement state after app restart / device switch.
-  /// With RevenueCat this is `Purchases.restorePurchases()`; with Stripe
-  /// this is typically "ask your backend for this user's current
-  /// subscription status."
-  Future<void> restorePurchases(String userId) async {
-    // TODO: query your backend / RevenueCat, then call
-    // AuthService.adminUpdateUser(userId, tier: ..., status: ...)
-    // (or an equivalent non-admin "sync my own status" method) to
-    // reflect the real subscription state locally.
-    throw UnimplementedError('Wire this up before calling in production.');
+  /// Re-sync entitlement after a restart / device switch. With real billing
+  /// this asks the backend (or RevenueCat) for the current subscription state.
+  Future<void> restorePurchases() async {
+    throw UnimplementedError('Billing is not active.');
   }
 }
