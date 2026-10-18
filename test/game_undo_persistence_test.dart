@@ -282,4 +282,73 @@ void main() {
     await s.flushPendingWrites();
     expect(st.pitches['p1']!.single.game, 'Eagles Blue');
   });
+
+  group('automatic game numbering', () {
+    test('counts saved games per team, ignoring case and spaces', () async {
+      await _pitch(s, 'b'); // saves a row for Eagles game 1
+      s.setGame('Eureka', 1, 2026);
+      await _pitch(s, 'b');
+      s.setGame(' EUREKA ', 2, 2026);
+      await _pitch(s, 'b');
+      expect(s.nextGameNumberFor('eureka', 2026), 3);
+      expect(s.nextGameNumberFor('Brand New Team', 2026), 1);
+      expect(s.knownTeams.where((t) => t.toLowerCase().trim() == 'eureka').length, 1);
+    });
+
+    test('deleting a game lowers the next number; gaps never duplicate', () async {
+      s.setGame('Eureka', 2, 2026);
+      await _pitch(s, 'b');
+      expect(s.nextGameNumberFor('Eureka', 2026), 3); // only Game 2 saved
+    });
+  });
+
+  group('dropped third strike', () {
+    Future<void> twoStrikes() async {
+      await _pitch(s, 'ss');
+      await _pitch(s, 'ss');
+    }
+
+    test('credits one strikeout, no out, one pitch row, ends the PA', () async {
+      await twoStrikes();
+      await s.addPitch(pitchType: 'sl', call: 'ss', droppedThirdStrike: true);
+      expect(s.outs, 0);
+      expect(s.pitches.length, 3);
+      expect(s.pitches.last.outcome, 'kdk');
+      expect(s.pitches.last.pitchType, 'sl');
+      expect(s.pitches.where((p) => PitchEvent.kOutcomes.contains(p.outcome)).length, 1);
+      expect(s.completedPAs, 1);
+    });
+
+    test('batter out adds exactly one out', () async {
+      await twoStrikes();
+      await s.addPitch(pitchType: 'fb', call: 'ss', droppedThirdStrike: true, batterOut: true);
+      expect(s.outs, 1);
+    });
+
+    test('is refused without two strikes', () async {
+      await _pitch(s, 'ss');
+      await s.addPitch(pitchType: 'fb', call: 'ss', droppedThirdStrike: true);
+      expect(s.pitches.length, 1);
+    });
+
+    test('undo restores batter, count, outs and pitch count', () async {
+      await twoStrikes();
+      await s.addPitch(pitchType: 'fb', call: 'ss', droppedThirdStrike: true, batterOut: true);
+      await s.undoLastPitch();
+      expect(s.pitches.length, 2);
+      expect((s.balls, s.strikes), (0, 2));
+      expect(s.outs, 0);
+      expect(s.completedPAs, 0);
+      expect(s.battingOrderSlot, 1);
+    });
+
+    test('survives close and reopen without duplicating', () async {
+      await twoStrikes();
+      await s.addPitch(pitchType: 'fb', call: 'ss', droppedThirdStrike: true);
+      await s.flushPendingWrites();
+      final again = await _reopen(st);
+      expect(again.pitches.where((p) => p.outcome == 'kdk').length, 1);
+      expect(again.outs, 0);
+    });
+  });
 }

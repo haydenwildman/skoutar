@@ -362,7 +362,7 @@ class AppSession extends ChangeNotifier {
   /// finished or is still in progress).
   static const Set<String> _abEndingOutcomes = {
     '1b', '2b', '3b', 'hr', 'go', 'fo', 'lo', 'dp', 'e', 'fc', 'bb', 'hbp',
-    'k', 'kl', 'dk',
+    'k', 'kl', 'kdk', 'dk',
   };
 
   /// Value of [lineupSize] meaning "this lineup is longer than the standard 9
@@ -729,8 +729,44 @@ class AppSession extends ChangeNotifier {
 
   /// Known opponent names logged so far (for the dropdown), mirrors
   /// `known_teams()`.
-  List<String> get knownTeams =>
-      pitches.map((p) => p.game).toSet().toList()..sort();
+  List<String> get knownTeams {
+    // One entry per team even if it was typed with different capitalization
+    // or stray spaces ("Eureka", "EUREKA", " eureka "): the first spelling
+    // seen is the display name.
+    final byKey = <String, String>{};
+    for (final p in pitches) {
+      final display = p.game.trim().replaceAll(RegExp(r'\s+'), ' ');
+      if (display.isEmpty) continue;
+      byKey.putIfAbsent(normalizeTeamName(display), () => display);
+    }
+    return byKey.values.toList()..sort();
+  }
+
+  /// Case-/whitespace-insensitive key used to decide that two opponent
+  /// strings are the same team.
+  static String normalizeTeamName(String name) =>
+      name.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+
+  /// The game number the next game against [opponent] in [season] should
+  /// get. Source of truth is the saved pitch/event rows: every distinct
+  /// saved (season, game #) for that team counts as one recorded game, so
+  /// deleting a game (its rows disappear) lowers the next number, and a
+  /// blank New Game form (no rows yet) is never counted. Takes the larger
+  /// of "games recorded" and "highest saved game # + 1" so a gap in the
+  /// numbering (e.g. only Game 2 saved) can never produce a duplicate.
+  int nextGameNumberFor(String opponent, int season) {
+    final key = normalizeTeamName(opponent);
+    if (key.isEmpty) return 1;
+    final nums = <int>{};
+    for (final p in pitches) {
+      if (p.season == season && normalizeTeamName(p.game) == key) {
+        nums.add(p.gameNumber);
+      }
+    }
+    if (nums.isEmpty) return 1;
+    final highest = nums.reduce((a, b) => a > b ? a : b);
+    return nums.length >= highest ? nums.length + 1 : highest + 1;
+  }
 
   void setGame(String opponent, int gameNumber, [int? season]) {
     final changed = opponent != currentOpponent || gameNumber != currentGameNumber;
@@ -1020,8 +1056,16 @@ class AppSession extends ChangeNotifier {
     double? yCoord,
     String? battedType,
     double er = 0,
+    bool droppedThirdStrike = false,
+    bool batterOut = false,
   }) async {
     if (currentUser == null || switchingPitcher) {
+      return PitchAddResult(endedAB: false, nextBattingOrder: battingOrderSlot);
+    }
+    // Dropped third strike: one strike-three pitch ('ss' or 'sl') thrown with
+    // two strikes already on the batter. Refuse anything else so a bad call
+    // can never create a strikeout out of thin air.
+    if (droppedThirdStrike && !(strikes == 2 && (call == 'ss' || call == 'sl'))) {
       return PitchAddResult(endedAB: false, nextBattingOrder: battingOrderSlot);
     }
     final snap = _captureSnapshot(); // the state BEFORE this pitch changes anything
@@ -1040,14 +1084,14 @@ class AppSession extends ChangeNotifier {
         strikes++;
         if (strikes >= 3) {
           endAB = true;
-          outcome = 'k';
+          outcome = droppedThirdStrike ? PitchEvent.droppedThirdStrikeOutcome : 'k';
         }
         break;
       case 'sl': // called strike (looking)
         strikes++;
         if (strikes >= 3) {
           endAB = true;
-          outcome = 'kl';
+          outcome = droppedThirdStrike ? PitchEvent.droppedThirdStrikeOutcome : 'kl';
         }
         break;
       case 'f': // foul
@@ -1075,6 +1119,10 @@ class AppSession extends ChangeNotifier {
       outs = (outs + 1).clamp(0, 3);
     } else if (outcome == 'dp') {
       outs = (outs + 2).clamp(0, 3);
+    } else if (outcome == PitchEvent.droppedThirdStrikeOutcome && batterOut) {
+      // A dropped third strike is the strikeout only — it adds an out ONLY
+      // when the person says the batter was actually put out on the play.
+      outs = (outs + 1).clamp(0, 3);
     }
 
     final ev = PitchEvent(

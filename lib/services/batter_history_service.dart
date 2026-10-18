@@ -375,7 +375,7 @@ class BatterHistoryService {
     }
 
     for (final ab in atBats) {
-      if (ab.finalOutcome == 'k' || ab.finalOutcome == 'kl') strikeouts++;
+      if (PitchEvent.kOutcomes.contains(ab.finalOutcome)) strikeouts++;
       if (ab.finalOutcome == 'bb') walks++;
     }
 
