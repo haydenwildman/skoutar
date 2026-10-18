@@ -42048,7 +42048,7 @@ return A.A($async$ba8,r)},
 b9S(){var s=0,r=A.B(t.H)
 var $async$b9S=A.C(function(a,b){if(a===1)return A.y(b,r)
 for(;;)switch(s){case 0:s=2
-return A.t(A.aJt("YOUR_SUPABASE_PUBLISHABLE_KEY","https://xmzdwoqvnnwhbnntziuk.supabase.co"),$async$b9S)
+return A.t(A.aJt("sb_publishable_MLI_UHma0Z_9kT8p0MReaQ_lVQ2h_zN","https://xmzdwoqvnnwhbnntziuk.supabase.co"),$async$b9S)
 case 2:return A.z(null,r)}})
 return A.A($async$b9S,r)},
 bJo(a,b){throw A.k(A.fd("Not using FFI"))},
