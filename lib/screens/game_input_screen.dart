@@ -20,6 +20,17 @@ import 'package:intl/intl.dart';
 /// Pitch Type → Call → [Ball In Play] → [Spray Chart] → Pitch Type" flow).
 enum _Stage { newBatter, pitchType, call, bip, spray, history }
 
+/// The pitch-result buttons, in the order they are shown. Ball In Play is last,
+/// right after Hit By Pitch.
+const List<List<String>> gameInputCallButtons = [
+  ['Ball', 'b'],
+  ['Called Strike', 'sl'],
+  ['Swinging Strike', 'ss'],
+  ['Foul Ball', 'f'],
+  ['Hit By Pitch', 'hbp'],
+  ['Ball In Play', 'ip'],
+];
+
 class GameInputScreen extends StatefulWidget {
   const GameInputScreen({super.key});
 
@@ -58,14 +69,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
   _Stage _stage = _Stage.pitchType;
   _Stage _stageBeforeHistory = _Stage.pitchType;
 
-  static const callButtons = [
-    ['Ball', 'b'],
-    ['Called Strike', 'sl'],
-    ['Swinging Strike', 'ss'],
-    ['Foul Ball', 'f'],
-    ['Ball In Play', 'ip'],
-    ['Hit By Pitch', 'hbp'],
-  ];
+  static const callButtons = gameInputCallButtons;
   static const bipButtonsRow1 = ['1b', '2b', '3b', 'hr'];
   static const bipButtonsRow2 = ['go', 'fo', 'lo', 'fc', 'dp', 'e'];
 
@@ -1083,6 +1087,57 @@ class _GameInputScreenState extends State<GameInputScreen> {
     );
   }
 
+  /// Opens History, or closes it if it is already open. (Opening it a second
+  /// time used to record History itself as the screen to go back to, so the
+  /// back arrow had nowhere to go.) Nothing about the game is touched.
+  void _toggleHistory() {
+    if (_stage == _Stage.history) {
+      _closeHistory();
+    } else {
+      setState(() {
+        _stageBeforeHistory = _stage;
+        _stage = _Stage.history;
+      });
+    }
+  }
+
+  /// Returns from History to the stage the person was on. If that stage can no
+  /// longer be shown (for example, no batter is set), falls back to a valid one.
+  void _closeHistory() {
+    final session = context.read<AppSession>();
+    var target = _stageBeforeHistory;
+    if (target == _Stage.history) target = _Stage.pitchType;
+    if (target != _Stage.newBatter && session.committedJersey == null) {
+      target = _Stage.newBatter;
+    }
+    setState(() => _stage = target);
+  }
+
+  /// Undo the last action, then make the screen match the restored game: back
+  /// to pitch entry for the restored batter (the undone action may have moved
+  /// us to the next batter), with any half-entered pitch cleared.
+  Future<void> _handleUndo() async {
+    final session = context.read<AppSession>();
+    final inHistory = _stage == _Stage.history;
+    await session.undoLastPitch();
+    if (!mounted) return;
+    _orderCtrl.text = session.battingOrderSlot.toString();
+    _lastSyncedOrder = session.battingOrderSlot;
+    _orderEdited = false;
+    setState(() {
+      _pitchType = null;
+      _call = null;
+      _bipOutcome = null;
+      _battedType = null;
+      _sprayX = null;
+      _sprayY = null;
+      _erValue = 0;
+      if (!inHistory) {
+        _stage = session.committedJersey == null ? _Stage.newBatter : _Stage.pitchType;
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = context.watch<AppSession>();
@@ -1114,15 +1169,13 @@ class _GameInputScreenState extends State<GameInputScreen> {
             ),
             const Spacer(),
             IconButton(
-              tooltip: 'History',
-              onPressed: () => setState(() {
-                _stageBeforeHistory = _stage;
-                _stage = _Stage.history;
-              }),
-              icon: const Icon(Icons.history, color: AppColors.ink),
+              tooltip: _stage == _Stage.history ? 'Back to game input' : 'History',
+              onPressed: _toggleHistory,
+              icon: Icon(_stage == _Stage.history ? Icons.close : Icons.history,
+                  color: AppColors.ink),
             ),
             OutlinedButton.icon(
-              onPressed: () => session.undoLastPitch(),
+              onPressed: _handleUndo,
               icon: const Icon(Icons.undo, size: 16),
               label: const Text('Undo'),
               style: OutlinedButton.styleFrom(
@@ -1132,6 +1185,26 @@ class _GameInputScreenState extends State<GameInputScreen> {
             ),
           ],
         ),
+        if (session.saveError != null) ...[
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF1F0),
+              border: Border.all(color: AppColors.perfPoor),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(children: [
+              const Icon(Icons.cloud_off, size: 18, color: AppColors.perfPoor),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(session.saveError!,
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+              ),
+              TextButton(onPressed: session.retrySave, child: const Text('Retry')),
+            ]),
+          ),
+        ],
         const SizedBox(height: 8),
 
         // ── 1. Game header: team/game info + Edit / New Game ──────
@@ -1268,6 +1341,26 @@ class _GameInputScreenState extends State<GameInputScreen> {
             fontWeight: FontWeight.w900,
             letterSpacing: 2));
 
+    // Pitch Count for the selected game, counted from the saved pitch records.
+    final pitchCountBox = Semantics(
+      label: 'Pitch Count ${session.currentGamePitchCount}',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('PITCH COUNT',
+              style: TextStyle(
+                  color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 0.6)),
+          Text('${session.currentGamePitchCount}',
+              key: const ValueKey('pitchCount'),
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: phone ? 24 : 26,
+                  fontWeight: FontWeight.w900)),
+        ],
+      ),
+    );
+
     final outsControl = Column(
       crossAxisAlignment: CrossAxisAlignment.end,
       mainAxisSize: MainAxisSize.min,
@@ -1345,7 +1438,8 @@ class _GameInputScreenState extends State<GameInputScreen> {
         borderRadius: BorderRadius.circular(10),
       ),
       child: phone
-          ? Row(
+          ? Column(mainAxisSize: MainAxisSize.min, children: [
+              Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 batterInfo,
@@ -1356,12 +1450,27 @@ class _GameInputScreenState extends State<GameInputScreen> {
                   children: [countText, const SizedBox(height: 2), outsControl],
                 ),
               ],
-            )
+            ),
+              const SizedBox(height: 6),
+              const Divider(height: 1, color: Colors.white24),
+              const SizedBox(height: 6),
+              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Text('PITCH COUNT',
+                    style: TextStyle(
+                        color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 0.6)),
+                const SizedBox(width: 10),
+                Text('${session.currentGamePitchCount}',
+                    key: const ValueKey('pitchCountPhone'),
+                    style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900)),
+              ]),
+            ])
           : Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 batterInfo,
                 const SizedBox(width: 14),
+                pitchCountBox,
+                const SizedBox(width: 18),
                 countText,
                 const SizedBox(width: 14),
                 outsControl,
@@ -1867,7 +1976,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
 
     return _stageCard(
       title: 'HISTORY — LAST ${recent.length} PITCHES THIS GAME',
-      onBack: () => setState(() => _stage = _stageBeforeHistory),
+      onBack: _closeHistory,
       child: recent.isEmpty
           ? const Padding(
               padding: EdgeInsets.symmetric(vertical: 24),

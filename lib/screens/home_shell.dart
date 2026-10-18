@@ -35,7 +35,7 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> {
+class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   String _selected = 'Game Input';
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   bool _drawerOpenOnMobile = false;
@@ -61,6 +61,16 @@ class _HomeShellState extends State<HomeShell> {
     session.onActivePitcherChanged = () => _bullpen.reloadForPitcher();
     _bullpen.addListener(_onBullpenChanged);
     _bullpen.load();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  /// Finish any save still in flight whenever the app is sent to the
+  /// background, hidden, or closed (phone suspension, minimized window).
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) {
+      _session.flushPendingWrites();
+    }
   }
 
   /// "Send to Bullpen" asks the shell to switch tabs.
@@ -74,6 +84,7 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _session.onActivePitcherChanged = null;
     _bullpen.removeListener(_onBullpenChanged);
     _bullpen.dispose();

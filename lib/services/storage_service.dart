@@ -142,11 +142,31 @@ class StorageService {
     return (row['settings'] as Map<String, dynamic>?) ?? {};
   }
 
-  Future<void> _patchSettings(String userId, String key, dynamic value) async {
-    final settings = await _loadSettings(userId);
-    settings[key] = value;
-    await sb.from('pitchers').update({'settings': settings}).eq('id', userId);
+  // Each settings write reads the whole object, changes one key, and writes it
+  // back, so two overlapping writes (say the live game state and a pitch color)
+  // could overwrite each other. They run one at a time through this queue.
+  Future<void> _settingsQueue = Future<void>.value();
+
+  Future<void> _patchSettings(String userId, String key, dynamic value) {
+    final run = _settingsQueue.then((_) async {
+      final settings = await _loadSettings(userId);
+      settings[key] = value;
+      await sb.from('pitchers').update({'settings': settings}).eq('id', userId);
+    });
+    _settingsQueue = run.catchError((_) {}); // a failed write must not block the next
+    return run;
   }
+
+  /// The live Game Input state (batter, count, outs, inning, undo history),
+  /// saved after every action so the app resumes exactly where it left off.
+  Future<Map<String, dynamic>?> loadLiveState(String userId) async {
+    final s = await _loadSettings(userId);
+    final v = s['liveGameState'];
+    return v is Map ? Map<String, dynamic>.from(v) : null;
+  }
+
+  Future<void> saveLiveState(String userId, Map<String, dynamic> state) =>
+      _patchSettings(userId, 'liveGameState', state);
 
   Future<List<String>> loadCustomPitchTypes(String userId) async {
     final s = await _loadSettings(userId);

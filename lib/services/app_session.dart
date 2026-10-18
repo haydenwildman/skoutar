@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import '../models/pitcher.dart';
@@ -62,7 +64,13 @@ class _GameStateSnapshot {
   final int completedPAs;
   final int lineupSize;
   final int currentInning;
-  const _GameStateSnapshot({
+
+  /// Id of the pitch/event row this action added. Undo removes exactly this
+  /// row (never "whatever happens to be last"), so it can't remove the wrong
+  /// record. Set right after the row is created.
+  String? pitchId;
+
+  _GameStateSnapshot({
     required this.currentOpponent,
     required this.currentGameNumber,
     required this.currentSeason,
@@ -77,7 +85,51 @@ class _GameStateSnapshot {
     required this.completedPAs,
     required this.lineupSize,
     required this.currentInning,
+    this.pitchId,
   });
+
+  Map<String, dynamic> toJson() => {
+        'opp': currentOpponent,
+        'gn': currentGameNumber,
+        'season': currentSeason,
+        'slot': battingOrderSlot,
+        'jersey': committedJersey,
+        'hand': hand,
+        'balls': balls,
+        'strikes': strikes,
+        'outs': outs,
+        'pn': pitchNumInAB,
+        'pa': paCounter,
+        'done': completedPAs,
+        'lineup': lineupSize,
+        'inning': currentInning,
+        'pid': pitchId,
+      };
+
+  static _GameStateSnapshot? fromJson(Object? j) {
+    if (j is! Map) return null;
+    try {
+      return _GameStateSnapshot(
+        currentOpponent: j['opp'] as String,
+        currentGameNumber: j['gn'] as int,
+        currentSeason: j['season'] as int,
+        battingOrderSlot: j['slot'] as int,
+        committedJersey: j['jersey'] as int?,
+        hand: j['hand'] as String,
+        balls: j['balls'] as int,
+        strikes: j['strikes'] as int,
+        outs: j['outs'] as int,
+        pitchNumInAB: j['pn'] as int,
+        paCounter: j['pa'] as int,
+        completedPAs: j['done'] as int,
+        lineupSize: j['lineup'] as int,
+        currentInning: j['inning'] as int,
+        pitchId: j['pid'] as String?,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
 }
 
 class AppSession extends ChangeNotifier {
@@ -118,6 +170,174 @@ class AppSession extends ChangeNotifier {
   /// edit, delete, or a new game), since the stack would no longer line up
   /// with the tail of [pitches] at that point.
   final List<_GameStateSnapshot> _undoStack = [];
+
+  // ── Saving ────────────────────────────────────────────────────
+  //
+  // Every change to the game (pitch, undo, edit, delete, batter change) is
+  // written to Supabase right away, through ONE ordered queue, so two saves
+  // can never run at the same time and an older save can never overwrite a
+  // newer one. Each write reads the newest in-memory state when it runs, and
+  // calls made while a write is already waiting share it. [saveError] is set if
+  // a write fails, and the write is retried on the next change.
+
+  /// Set when the last save failed; null when everything is saved.
+  String? saveError;
+
+  Future<void> _writeChain = Future<void>.value();
+  bool _pitchesDirty = false;
+  bool _liveDirty = false;
+  bool _writeQueued = false;
+
+  /// Saves the pitch log (when [pitches] is true) and the live game state.
+  /// Complete when this change (and every earlier one) has been written.
+  Future<void> _persist({bool pitches = true}) {
+    if (pitches) _pitchesDirty = true;
+    _liveDirty = true;
+    if (!_writeQueued) {
+      _writeQueued = true;
+      _writeChain = _writeChain.then((_) => _runPersist());
+    }
+    return _writeChain;
+  }
+
+  /// Fire-and-forget version for small live-state changes (jersey, order,
+  /// hand, outs) that don't touch the pitch log.
+  void _persistLive() => unawaited(_persist(pitches: false));
+
+  Future<void> _runPersist() async {
+    _writeQueued = false;
+    if (currentUser == null || switchingPitcher || activePitcher == null) {
+      _pitchesDirty = false;
+      _liveDirty = false;
+      return;
+    }
+    final id = activePitcherId;
+    final doPitches = _pitchesDirty;
+    final doLive = _liveDirty;
+    _pitchesDirty = false;
+    _liveDirty = false;
+    // Copied now, at the moment of writing, so this is always the newest state.
+    final list = List<PitchEvent>.from(pitches);
+    final live = _liveStateJson();
+    try {
+      if (doPitches) await storage.savePitchesForUser(id, list);
+      if (doLive) await storage.saveLiveState(id, live);
+      if (saveError != null) {
+        saveError = null;
+        notifyListeners();
+      }
+    } catch (_) {
+      _pitchesDirty = _pitchesDirty || doPitches;
+      _liveDirty = _liveDirty || doLive;
+      saveError = 'Your latest changes could not be saved. Check your connection; '
+          'they will be retried on your next action.';
+      notifyListeners();
+    }
+  }
+
+  /// Tries again after a failed save (the "Retry" button on the save warning).
+  Future<void> retrySave() => _persist();
+
+  /// Waits for every pending save to finish. Called before switching pitchers,
+  /// logging out, and when the app is sent to the background.
+  Future<void> flushPendingWrites() async {
+    if (_pitchesDirty || _liveDirty) {
+      await _persist(pitches: _pitchesDirty);
+    } else {
+      await _writeChain;
+    }
+  }
+
+  Map<String, dynamic> _liveStateJson() => {
+        'opp': currentOpponent,
+        'gn': currentGameNumber,
+        'season': currentSeason,
+        'slot': battingOrderSlot,
+        'jersey': committedJersey,
+        'hand': hand,
+        'balls': balls,
+        'strikes': strikes,
+        'outs': outs,
+        'pn': pitchNumInAB,
+        'pa': _paCounter,
+        'done': completedPAs,
+        'lineup': lineupSize,
+        'inning': currentInning,
+        // Newest last; capped so the saved record stays small.
+        'undo': [
+          for (final snap in _undoStack.length > _maxUndo
+              ? _undoStack.sublist(_undoStack.length - _maxUndo)
+              : _undoStack)
+            snap.toJson(),
+        ],
+      };
+
+  static const int _maxUndo = 50;
+
+  /// Restores the live game state saved by the last session, but only if it
+  /// still matches the saved pitch log (it is ignored, and the state rebuilt
+  /// from the pitch log instead, if the two disagree).
+  void _applyLiveState(Map<String, dynamic>? j) {
+    if (j == null) return;
+    try {
+      final opp = j['opp'] as String;
+      final gn = j['gn'] as int;
+      final season = j['season'] as int;
+      final paCounter = j['pa'] as int;
+      final gameRows = pitches
+          .where((p) => p.game == opp && p.gameNumber == gn && p.season == season)
+          .toList();
+      // The saved PA counter must agree with the saved rows of that game
+      // (a game with no rows yet is fine: it was just picked).
+      if (gameRows.isNotEmpty) {
+        final maxPa = gameRows.map((p) => p.paId).fold<int>(0, (a, b) => a > b ? a : b);
+        if (paCounter < maxPa) return;
+      }
+      currentOpponent = opp;
+      currentGameNumber = gn;
+      currentSeason = season;
+      battingOrderSlot = j['slot'] as int;
+      committedJersey = j['jersey'] as int?;
+      hand = j['hand'] as String;
+      balls = j['balls'] as int;
+      strikes = j['strikes'] as int;
+      outs = j['outs'] as int;
+      pitchNumInAB = j['pn'] as int;
+      _paCounter = paCounter;
+      completedPAs = j['done'] as int;
+      lineupSize = j['lineup'] as int;
+      currentInning = j['inning'] as int;
+      _undoStack.clear();
+      final ids = pitches.map((p) => p.id).toSet();
+      for (final raw in (j['undo'] as List? ?? const [])) {
+        final snap = _GameStateSnapshot.fromJson(raw);
+        if (snap != null && snap.pitchId != null && ids.contains(snap.pitchId)) {
+          _undoStack.add(snap);
+        }
+      }
+      // The newest undo step must belong to the newest row of this game.
+      if (_undoStack.isNotEmpty) {
+        final lastRow = pitches.lastIndexWhere(
+            (p) => p.game == opp && p.gameNumber == gn && p.season == season);
+        if (lastRow < 0 || pitches[lastRow].id != _undoStack.last.pitchId) {
+          _undoStack.clear();
+        }
+      }
+    } catch (_) {
+      // Unreadable saved state: the state rebuilt from the pitch log stays.
+    }
+  }
+
+  /// Pitches thrown in the CURRENT game: counted from the saved pitch records
+  /// (never from a separate counter), once per pitch. Pickoffs, throw-outs,
+  /// caught-stealing and balks are not pitches.
+  int get currentGamePitchCount => pitches
+      .where((p) =>
+          p.eventType == 'pitch' &&
+          p.game == currentOpponent &&
+          p.gameNumber == currentGameNumber &&
+          p.season == currentSeason)
+      .length;
 
   _GameStateSnapshot _captureSnapshot() => _GameStateSnapshot(
         currentOpponent: currentOpponent,
@@ -341,12 +561,18 @@ class AppSession extends ChangeNotifier {
     selectedYear = null;
     _resetLiveState(); // a game in progress belongs to the previous pitcher
     _restoreCountersFromHistory();
+    // Then put back exactly where the last session left off (batter, count,
+    // outs, inning, undo history), if it still matches the saved pitches.
+    try {
+      _applyLiveState(await storage.loadLiveState(id));
+    } catch (_) {}
   }
 
   /// Makes [p] the active pitcher everywhere in the app. All data is cleared
   /// and re-loaded for that pitcher before anything can be saved again.
   Future<void> switchPitcher(Pitcher p) async {
     if (p.id == activePitcher?.id || switchingPitcher) return;
+    await flushPendingWrites(); // finish saving the current pitcher first
     switchingPitcher = true;
     notifyListeners();
     try {
@@ -364,6 +590,7 @@ class AppSession extends ChangeNotifier {
   /// persisted Supabase session would silently log this device back in
   /// next launch via [AuthService.restoreSession]).
   Future<void> logout() async {
+    await flushPendingWrites();
     await auth.logout();
     currentUser = null;
     pitchers = [];
@@ -398,33 +625,50 @@ class AppSession extends ChangeNotifier {
     _undoStack.clear();
   }
 
+  /// Rebuilds the live game state from the saved pitch log. Used after any
+  /// edit or delete, and when no saved live state is available. Works on the
+  /// game being played (or, if it has no rows, the newest saved game).
   void _restoreCountersFromHistory() {
     if (pitches.isEmpty) {
       _paCounter = 0;
       completedPAs = 0;
+      balls = 0;
+      strikes = 0;
+      pitchNumInAB = 1;
       return;
     }
-    final maxPaId =
-        pitches.map((p) => p.paId).fold<int>(0, (a, b) => a > b ? a : b);
-    _paCounter = maxPaId;
-    final last = pitches.last;
+    // Prefer the game currently being played so editing or deleting rows in
+    // another game never moves the person to a different game.
+    var last = pitches.last;
+    if (currentOpponent.isNotEmpty) {
+      final i = pitches.lastIndexWhere((p) =>
+          p.game == currentOpponent &&
+          p.gameNumber == currentGameNumber &&
+          p.season == currentSeason);
+      if (i >= 0) last = pitches[i];
+    }
+    final gameRows = pitches
+        .where((p) =>
+            p.game == last.game &&
+            p.gameNumber == last.gameNumber &&
+            p.season == last.season)
+        .toList();
+    _paCounter = gameRows.map((p) => p.paId).fold<int>(0, (a, b) => a > b ? a : b);
     currentOpponent = last.game;
     currentGameNumber = last.gameNumber;
     currentSeason = last.season;
     committedJersey = last.batterNumber;
     battingOrderSlot = last.battingOrder;
+    hand = last.hand;
     outs = last.outs >= 3 ? 0 : last.outs;
     // Resume from the last logged inning, if any row in this game recorded
-    // one (older saved data may predate inning tracking and have none).
-    final lastInning = pitches
-        .where((p) =>
-            p.game == currentOpponent &&
-            p.gameNumber == currentGameNumber &&
-            p.season == currentSeason &&
-            p.inning != null)
+    // one (older saved data may predate inning tracking and have none). A
+    // third out ends the inning, so the next one starts.
+    final lastInning = gameRows
+        .where((p) => p.inning != null)
         .map((p) => p.inning!)
         .fold<int?>(null, (a, b) => a == null ? b : (b > a ? b : a));
-    currentInning = lastInning ?? 1;
+    currentInning = (lastInning ?? 1) + (last.outs >= 3 ? 1 : 0);
 
     // Batters Faced ("completed PAs") — recomputed fresh from the saved log,
     // never trusted as a running total, so deletes/edits/undos can't drift
@@ -437,12 +681,50 @@ class AppSession extends ChangeNotifier {
     //  - If that row's PA is still in progress (mid at-bat), nothing new
     //    has completed yet: completedPAs = lastPitchRow.batter, unchanged.
     final lastPitchRow =
-        pitches.reversed.firstWhere((p) => p.eventType == 'pitch', orElse: () => last);
+        gameRows.reversed.firstWhere((p) => p.eventType == 'pitch', orElse: () => last);
     final lastPaEnded = lastPitchRow.outcome != null &&
         _abEndingOutcomes.contains(lastPitchRow.outcome);
-    completedPAs =
-        lastPaEnded ? lastPitchRow.batter + 1 : lastPitchRow.batter;
+    completedPAs = lastPaEnded ? lastPitchRow.batter + 1 : lastPitchRow.batter;
     lineupSize = _inferLineupSize();
+
+    if (lastPaEnded) {
+      // That at-bat is over: the next batter is up with a fresh 0-0 count,
+      // exactly as addPitch leaves things after the final pitch of an at-bat.
+      balls = 0;
+      strikes = 0;
+      pitchNumInAB = 1;
+      final wrap = battingOrderSlot >= lineupSize;
+      battingOrderSlot = wrap ? 1 : battingOrderSlot + 1;
+      final suggestedHand = lookupHandForSpot(battingOrderSlot);
+      if (suggestedHand != null) hand = suggestedHand;
+      committedJersey = lineupLocked ? lookupJerseyForSpot(battingOrderSlot) : null;
+    } else {
+      // Mid at-bat: rebuild balls / strikes / pitch # from this at-bat's pitches.
+      var b = 0, st = 0, n = 0;
+      for (final p in gameRows) {
+        if (p.eventType != 'pitch' ||
+            p.paId != lastPitchRow.paId ||
+            p.batter != lastPitchRow.batter) {
+          continue;
+        }
+        n++;
+        switch (p.call) {
+          case 'b':
+            b++;
+            break;
+          case 'ss':
+          case 'sl':
+            st++;
+            break;
+          case 'f':
+            if (st < 2) st++;
+            break;
+        }
+      }
+      balls = b.clamp(0, 3);
+      strikes = st.clamp(0, 2);
+      pitchNumInAB = n + 1;
+    }
   }
 
   /// Known opponent names logged so far (for the dropdown), mirrors
@@ -475,6 +757,7 @@ class AppSession extends ChangeNotifier {
       _undoStack.clear();
     }
     notifyListeners();
+    _persistLive(); // remember which game is selected
   }
 
   /// Corrects the identifying info (team name, game number, year) of the
@@ -507,8 +790,9 @@ class AppSession extends ChangeNotifier {
     currentOpponent = newOpponent;
     currentGameNumber = newGameNumber;
     currentSeason = newSeason;
-    await storage.savePitchesForUser(activePitcherId, pitches);
+    _undoStack.clear(); // saved steps still carry the old team name
     notifyListeners();
+    await _persist();
   }
 
   void setBatter(int jersey, int battingOrder) {
@@ -519,11 +803,13 @@ class AppSession extends ChangeNotifier {
     strikes = 0;
     pitchNumInAB = 1;
     notifyListeners();
+    _persistLive();
   }
 
   void setHand(String h) {
     hand = h;
     notifyListeners();
+    _persistLive();
   }
 
   /// Corrects the currently-active batter's jersey # in place. Unlike
@@ -534,6 +820,7 @@ class AppSession extends ChangeNotifier {
   void updateCommittedJersey(int? jersey) {
     committedJersey = jersey;
     notifyListeners();
+    _persistLive();
   }
 
   /// Lets the batting order be corrected live at any time — before or
@@ -560,6 +847,7 @@ class AppSession extends ChangeNotifier {
     }
     battingOrderSlot = slot;
     notifyListeners();
+    _persistLive();
   }
 
   /// Highest batting-order spot logged so far in the current game (0 if none).
@@ -736,7 +1024,7 @@ class AppSession extends ChangeNotifier {
     if (currentUser == null || switchingPitcher) {
       return PitchAddResult(endedAB: false, nextBattingOrder: battingOrderSlot);
     }
-    _undoStack.add(_captureSnapshot());
+    final snap = _captureSnapshot(); // the state BEFORE this pitch changes anything
     String? outcome = bipOutcome;
     bool endAB = false;
 
@@ -814,8 +1102,13 @@ class AppSession extends ChangeNotifier {
       season: currentSeason,
     );
 
+    // From here to the end of this method every change is synchronous (no
+    // await), so a quick Undo tap can never see a half-updated game. The
+    // save happens last, through the ordered save queue.
+    snap.pitchId = ev.id;
+    _undoStack.add(snap);
+    if (_undoStack.length > _maxUndo) _undoStack.removeAt(0);
     pitches.add(ev);
-    await storage.savePitchesForUser(activePitcherId, pitches);
 
     if (outs >= 3) {
       outs = 0;
@@ -848,6 +1141,7 @@ class AppSession extends ChangeNotifier {
       // types the number, which auto-saves as they type.
       committedJersey = lineupLocked ? suggestedJersey : null;
       notifyListeners();
+      await _persist();
       return PitchAddResult(
         endedAB: true,
         nextBattingOrder: battingOrderSlot,
@@ -857,6 +1151,7 @@ class AppSession extends ChangeNotifier {
     } else {
       pitchNumInAB++;
       notifyListeners();
+      await _persist();
       return PitchAddResult(endedAB: false, nextBattingOrder: battingOrderSlot);
     }
   }
@@ -875,7 +1170,7 @@ class AppSession extends ChangeNotifier {
     required bool recordsOut,
   }) async {
     if (currentUser == null || switchingPitcher) return;
-    _undoStack.add(_captureSnapshot());
+    final snap = _captureSnapshot(); // state BEFORE this event
     if (recordsOut) {
       outs = (outs + 1).clamp(0, 3);
     }
@@ -903,8 +1198,10 @@ class AppSession extends ChangeNotifier {
       paId: _paCounter,
       season: currentSeason,
     );
+    snap.pitchId = ev.id;
+    _undoStack.add(snap);
+    if (_undoStack.length > _maxUndo) _undoStack.removeAt(0);
     pitches.add(ev);
-    await storage.savePitchesForUser(activePitcherId, pitches);
     // If this PO/CS was the third out of the inning, the frame ends but the
     // plate appearance does not: the same batter leads off next inning, so
     // the count resets to 0-0 while Batters Faced and the batting order stay
@@ -917,6 +1214,7 @@ class AppSession extends ChangeNotifier {
       currentInning++;
     }
     notifyListeners();
+    await _persist();
   }
 
   /// PO — runner picked off. Not a pitch: doesn't touch pitch totals or
@@ -954,34 +1252,50 @@ class AppSession extends ChangeNotifier {
   /// piece of live game state exactly, not just an approximation
   /// recomputed after the fact.
   Future<void> undoLastPitch() async {
-    if (currentUser == null || switchingPitcher || pitches.isEmpty) return;
+    if (currentUser == null || switchingPitcher) return;
+    var restored = false;
     if (_undoStack.isNotEmpty) {
-      final snap = _undoStack.removeLast();
-      pitches.removeLast();
-      await storage.savePitchesForUser(activePitcherId, pitches);
-      currentOpponent = snap.currentOpponent;
-      currentGameNumber = snap.currentGameNumber;
-      currentSeason = snap.currentSeason;
-      battingOrderSlot = snap.battingOrderSlot;
-      committedJersey = snap.committedJersey;
-      hand = snap.hand;
-      balls = snap.balls;
-      strikes = snap.strikes;
-      outs = snap.outs;
-      pitchNumInAB = snap.pitchNumInAB;
-      _paCounter = snap.paCounter;
-      completedPAs = snap.completedPAs;
-      lineupSize = snap.lineupSize;
-      currentInning = snap.currentInning;
-    } else {
-      // No snapshot to restore from (e.g. the last row wasn't logged from
-      // Game Input in this session) — fall back to removing the row and
-      // recomputing what can be recomputed from the saved log.
-      pitches.removeLast();
-      await storage.savePitchesForUser(activePitcherId, pitches);
+      final snap = _undoStack.last;
+      final idx = snap.pitchId == null ? -1 : pitches.lastIndexWhere((p) => p.id == snap.pitchId);
+      if (idx >= 0) {
+        // Exact restore: remove precisely the row this action added and put
+        // back every piece of live state as it was before it (including the
+        // previous batter, count, outs and inning when it ended an at-bat).
+        _undoStack.removeLast();
+        pitches.removeAt(idx);
+        currentOpponent = snap.currentOpponent;
+        currentGameNumber = snap.currentGameNumber;
+        currentSeason = snap.currentSeason;
+        battingOrderSlot = snap.battingOrderSlot;
+        committedJersey = snap.committedJersey;
+        hand = snap.hand;
+        balls = snap.balls;
+        strikes = snap.strikes;
+        outs = snap.outs;
+        pitchNumInAB = snap.pitchNumInAB;
+        _paCounter = snap.paCounter;
+        completedPAs = snap.completedPAs;
+        lineupSize = snap.lineupSize;
+        currentInning = snap.currentInning;
+        restored = true;
+      } else {
+        _undoStack.clear(); // its row no longer exists, so it can't be trusted
+      }
+    }
+    if (!restored) {
+      // No usable snapshot (for example the row was logged in an earlier
+      // session): remove the last row of THIS game and rebuild the count,
+      // batter, outs and inning from the saved log.
+      final idx = pitches.lastIndexWhere((p) =>
+          p.game == currentOpponent &&
+          p.gameNumber == currentGameNumber &&
+          p.season == currentSeason);
+      if (idx < 0) return;
+      pitches.removeAt(idx);
       _restoreCountersFromHistory();
     }
-    notifyListeners();
+    notifyListeners(); // the screen updates immediately
+    await _persist(); // and the undone state is what gets saved
   }
 
   /// Adds a fully-formed row from the Edit Raw Data screen's "Add Row"
@@ -991,10 +1305,10 @@ class AppSession extends ChangeNotifier {
   Future<void> addManualPitch(PitchEvent event) async {
     if (currentUser == null || switchingPitcher) return;
     pitches.add(event);
-    await storage.savePitchesForUser(activePitcherId, pitches);
     _undoStack.clear();
     _restoreCountersFromHistory();
-    notifyListeners();
+    notifyListeners(); // screens update immediately
+    await _persist();
   }
 
   /// Same as [addManualPitch], but inserts the row at [index] instead of
@@ -1004,19 +1318,19 @@ class AppSession extends ChangeNotifier {
     if (currentUser == null || switchingPitcher) return;
     final at = index.clamp(0, pitches.length);
     pitches.insert(at, event);
-    await storage.savePitchesForUser(activePitcherId, pitches);
     _undoStack.clear();
     _restoreCountersFromHistory();
-    notifyListeners();
+    notifyListeners(); // screens update immediately
+    await _persist();
   }
 
   Future<void> deletePitchAt(int index) async {
     if (currentUser == null || switchingPitcher) return;
     pitches.removeAt(index);
-    await storage.savePitchesForUser(activePitcherId, pitches);
     _undoStack.clear();
     _restoreCountersFromHistory();
-    notifyListeners();
+    notifyListeners(); // screens update immediately
+    await _persist();
   }
 
   /// Wipes every pitch/pickoff/throwout row for the current user — rows
@@ -1026,16 +1340,15 @@ class AppSession extends ChangeNotifier {
   Future<void> deleteAllPitches() async {
     if (currentUser == null || switchingPitcher) return;
     pitches = [];
-    await storage.savePitchesForUser(activePitcherId, pitches);
     _undoStack.clear();
     _restoreCountersFromHistory();
-    notifyListeners();
+    notifyListeners(); // screens update immediately
+    await _persist();
   }
 
   Future<void> updatePitchAt(int index, PitchEvent updated) async {
     if (currentUser == null || switchingPitcher) return;
     pitches[index] = updated;
-    await storage.savePitchesForUser(activePitcherId, pitches);
     // Editing an at-bat/pitch never creates or removes a plate appearance,
     // so this is just keeping the live game-state fields (opponent, batting
     // order, completedPAs, etc.) in sync with the edited data — it can
@@ -1044,15 +1357,16 @@ class AppSession extends ChangeNotifier {
     _undoStack.clear();
     _restoreCountersFromHistory();
     notifyListeners();
+    await _persist();
   }
 
   Future<void> replaceAllPitches(List<PitchEvent> newPitches) async {
     if (currentUser == null || switchingPitcher) return;
     pitches = newPitches;
-    await storage.savePitchesForUser(activePitcherId, pitches);
     _undoStack.clear();
     _restoreCountersFromHistory();
-    notifyListeners();
+    notifyListeners(); // screens update immediately
+    await _persist();
   }
 
   /// Directly sets Outs for the live Game Input count bar — used when
@@ -1062,5 +1376,6 @@ class AppSession extends ChangeNotifier {
   void setOuts(int value) {
     outs = value.clamp(0, 3);
     notifyListeners();
+    _persistLive();
   }
 }
