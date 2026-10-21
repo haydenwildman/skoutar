@@ -94,7 +94,7 @@ class SeqConfig {
 
   /// Pitcher-view value of how a PA ended (before in-play shrinkage).
   static const Map<String, double> resultValue = {
-    'k': 1.0, 'kl': 1.0, 'dp': 0.95, 'go': 0.78, 'fo': 0.72, 'lo': 0.65,
+    'k': 1.0, 'kl': 1.0, 'dk3': 1.0, 'dp': 0.95, 'go': 0.78, 'fo': 0.72, 'lo': 0.65,
     'fc': 0.5, 'e': 0.5, 'hbp': 0.15, 'bb': 0.0,
     '1b': 0.2, '2b': 0.08, '3b': 0.03, 'hr': 0.0,
   };
@@ -659,7 +659,7 @@ class SequenceScoring {
       if (share >= SeqConfig.usageShare && dec >= SeqConfig.usageDecisive && res[1] / dec >= 0.5) {
         pen.add(0.25 * (share - SeqConfig.usageShare) / (1 - SeqConfig.usageShare) + 0.10);
         notes.add(SeqNote(SeqPolarity.review, 'predict', 'usage_ineffective',
-            '${t.toUpperCase()} is used ${(share * 100).round()}% of the time at $b-$s and has been working poorly there.'));
+            '${t.toUpperCase()} is the go-to pitch at $b-$s and has been working poorly there.'));
       }
     }
     if (pit.length >= 3 && completed) {
@@ -697,7 +697,7 @@ class SequenceScoring {
       if (raw != null) {
         final inPlay = SeqConfig.inPlayOutcomes.contains(finalOutcome);
         values['result'] = inPlay ? 0.5 + (raw - 0.5) * SeqConfig.inPlayShrink : raw;
-        if (finalOutcome == 'k' || finalOutcome == 'kl') {
+        if (finalOutcome == 'k' || finalOutcome == 'kl' || finalOutcome == 'dk3') {
           notes.add(const SeqNote(SeqPolarity.positive, 'result', 'result_k', 'Plate appearance ended in a strikeout.'));
         } else if (finalOutcome == 'bb') {
           notes.add(const SeqNote(SeqPolarity.review, 'result', 'result_bb', 'Plate appearance ended in a walk.'));

@@ -28,7 +28,7 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
   static const callOptions = ['b', 'ss', 'sl', 'f', 'ip', 'hbp', 'dk'];
   static const outcomeOptions = [
     '', '1b', '2b', '3b', 'hr', 'go', 'fo', 'lo', 'dp', 'e', 'fc', 'bb',
-    'hbp', 'k', 'kl', 'dk', 'po_out', 'po_safe', 'to', 'txo', 'bk'
+    'hbp', 'k', 'kl', 'dk3', 'dk', 'po_out', 'po_safe', 'to', 'txo', 'bk'
   ];
 
   /// Opens the Add/Edit row dialog.

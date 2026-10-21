@@ -1,0 +1,38 @@
+diff --git a/lib/screens/pitch_sequencing_screen.dart b/lib/screens/pitch_sequencing_screen.dart
+index c3b6095..ad49588 100644
+--- a/lib/screens/pitch_sequencing_screen.dart
++++ b/lib/screens/pitch_sequencing_screen.dart
+@@ -340,3 +340,3 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
+                     what: 'Rows are pitch types; columns are counts (balls-strikes, with n = pitches thrown at that count). '
+-                        'Each cell has three stacked blocks: STR% (top, how often the pitch was a strike), USE% (middle, how often it was chosen at that count) and BAA (bottom, batting average against).\n'
++                        'Each cell has two stacked blocks: STR% (top, how often the pitch was a strike) and BAA (bottom, batting average against).\n'
+                         'Read across a row to see where a pitch is used; read down a column to compare pitches at one count. A "—" cell has no pitches.\n'
+@@ -350,3 +350,3 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
+                     Text(
+-                      'Each cell: Strike% (left) · Usage% (center) · BAA (right). Colors are scored independently on a 5-tier scale.',
++                      'Each cell: Strike% (top) · BAA (bottom). Colors are scored independently on a 5-tier scale.',
+                       style: TextStyle(fontSize: 11, color: AppColors.colMuted, fontStyle: FontStyle.italic),
+@@ -477,3 +477,3 @@ class _MiniTag extends StatelessWidget {
+ 
+-/// Larger, three-part-per-cell heat map: Strike% / Usage% / BAA, each
++/// Two-part-per-cell heat map: Strike% / BAA, each
+ /// colored independently on the shared 5-tier perf scale (item 11).
+@@ -545,6 +545,4 @@ class _PitchUsageHeatmap extends StatelessWidget {
+       final strikePct = c['strikePct'] as double?;
+-      final usagePct = c['usagePct'] as double?;
+       final baa = c['baa'] as double?;
+       final strikeBg = perfHex('f_strike', strikePct);
+-      final usageBg = perfHex('usage_predictability', usagePct);
+       final baaBg = perfHex('AVG', baa);
+@@ -554,3 +552,3 @@ class _PitchUsageHeatmap extends StatelessWidget {
+       Widget third(Color bg, String label, String value, String statKey, String what, String? note) {
+-        final shown = '${label == 'STR%' ? 'Strike %' : label == 'USE%' ? 'Usage %' : 'BAA'} at $count · ${pt.toUpperCase()}';
++        final shown = '${label == 'STR%' ? 'Strike %' : 'BAA'} at $count · ${pt.toUpperCase()}';
+         return StatHoldInfo(
+@@ -579,6 +577,2 @@ class _PitchUsageHeatmap extends StatelessWidget {
+               'Strike % here uses the same cutoffs as First-Pitch Strike % (F-Strike%).'),
+-          third(usageBg, 'USE%', usagePct != null ? '${usagePct.toStringAsFixed(0)}' : '—',
+-              'usage_predictability',
+-              'Usage %: of all pitches thrown at this count, the share that were this pitch type.',
+-              'Graded on the usage-predictability scale: leaning heavily on one pitch at a count is more predictable, so high usage trends toward orange/red.'),
+           third(baaBg, 'BAA', baa != null ? _fmtAvg(baa) : '—',

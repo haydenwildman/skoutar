@@ -70,6 +70,9 @@ class _GameStateSnapshot {
   /// record. Set right after the row is created.
   String? pitchId;
 
+  /// Whether a dropped third strike was waiting to be resolved at this moment.
+  final bool droppedPending;
+
   _GameStateSnapshot({
     required this.currentOpponent,
     required this.currentGameNumber,
@@ -86,6 +89,7 @@ class _GameStateSnapshot {
     required this.lineupSize,
     required this.currentInning,
     this.pitchId,
+    this.droppedPending = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -104,6 +108,7 @@ class _GameStateSnapshot {
         'lineup': lineupSize,
         'inning': currentInning,
         'pid': pitchId,
+        'dk3p': droppedPending,
       };
 
   static _GameStateSnapshot? fromJson(Object? j) {
@@ -125,6 +130,7 @@ class _GameStateSnapshot {
         lineupSize: j['lineup'] as int,
         currentInning: j['inning'] as int,
         pitchId: j['pid'] as String?,
+        droppedPending: (j['dk3p'] as bool?) ?? false,
       );
     } catch (_) {
       return null;
@@ -179,6 +185,12 @@ class AppSession extends ChangeNotifier {
   // newer one. Each write reads the newest in-memory state when it runs, and
   // calls made while a write is already waiting share it. [saveError] is set if
   // a write fails, and the write is retried on the next change.
+
+  /// A dropped third strike has been recorded (the strikeout is credited) but
+  /// the batter has not yet been moved on. No out has been recorded and the
+  /// batter, count and outs are untouched until the person says what happened:
+  /// see [resolveDroppedThirdStrike].
+  bool droppedThirdPending = false;
 
   /// Set when the last save failed; null when everything is saved.
   String? saveError;
@@ -263,6 +275,7 @@ class AppSession extends ChangeNotifier {
         'done': completedPAs,
         'lineup': lineupSize,
         'inning': currentInning,
+        'dk3p': droppedThirdPending,
         // Newest last; capped so the saved record stays small.
         'undo': [
           for (final snap in _undoStack.length > _maxUndo
@@ -307,16 +320,18 @@ class AppSession extends ChangeNotifier {
       completedPAs = j['done'] as int;
       lineupSize = j['lineup'] as int;
       currentInning = j['inning'] as int;
+      droppedThirdPending = (j['dk3p'] as bool?) ?? false;
       _undoStack.clear();
       final ids = pitches.map((p) => p.id).toSet();
       for (final raw in (j['undo'] as List? ?? const [])) {
         final snap = _GameStateSnapshot.fromJson(raw);
-        if (snap != null && snap.pitchId != null && ids.contains(snap.pitchId)) {
+        // A step with no row (a "batter reached" resolution) is state-only.
+        if (snap != null && (snap.pitchId == null || ids.contains(snap.pitchId))) {
           _undoStack.add(snap);
         }
       }
       // The newest undo step must belong to the newest row of this game.
-      if (_undoStack.isNotEmpty) {
+      if (_undoStack.isNotEmpty && _undoStack.last.pitchId != null) {
         final lastRow = pitches.lastIndexWhere(
             (p) => p.game == opp && p.gameNumber == gn && p.season == season);
         if (lastRow < 0 || pitches[lastRow].id != _undoStack.last.pitchId) {
@@ -354,6 +369,7 @@ class AppSession extends ChangeNotifier {
         completedPAs: completedPAs,
         lineupSize: lineupSize,
         currentInning: currentInning,
+        droppedPending: droppedThirdPending,
       );
 
   /// Outcomes that end a plate appearance — shared by [addPitch] (to decide
@@ -362,7 +378,7 @@ class AppSession extends ChangeNotifier {
   /// finished or is still in progress).
   static const Set<String> _abEndingOutcomes = {
     '1b', '2b', '3b', 'hr', 'go', 'fo', 'lo', 'dp', 'e', 'fc', 'bb', 'hbp',
-    'k', 'kl', 'kdk', 'dk',
+    'k', 'kl', 'dk', 'dk3',
   };
 
   /// Value of [lineupSize] meaning "this lineup is longer than the standard 9
@@ -622,6 +638,7 @@ class AppSession extends ChangeNotifier {
     completedPAs = 0;
     lineupSize = 9;
     currentInning = 1;
+    droppedThirdPending = false;
     _undoStack.clear();
   }
 
@@ -686,8 +703,11 @@ class AppSession extends ChangeNotifier {
         _abEndingOutcomes.contains(lastPitchRow.outcome);
     completedPAs = lastPaEnded ? lastPitchRow.batter + 1 : lastPitchRow.batter;
     lineupSize = _inferLineupSize();
+    // A dropped third strike that is the very last thing logged in this game is
+    // still waiting to be resolved: the batter stays where they are.
+    droppedThirdPending = lastPitchRow.outcome == 'dk3' && gameRows.last.id == lastPitchRow.id;
 
-    if (lastPaEnded) {
+    if (lastPaEnded && !droppedThirdPending) {
       // That at-bat is over: the next batter is up with a fresh 0-0 count,
       // exactly as addPitch leaves things after the final pitch of an at-bat.
       balls = 0;
@@ -729,44 +749,8 @@ class AppSession extends ChangeNotifier {
 
   /// Known opponent names logged so far (for the dropdown), mirrors
   /// `known_teams()`.
-  List<String> get knownTeams {
-    // One entry per team even if it was typed with different capitalization
-    // or stray spaces ("Eureka", "EUREKA", " eureka "): the first spelling
-    // seen is the display name.
-    final byKey = <String, String>{};
-    for (final p in pitches) {
-      final display = p.game.trim().replaceAll(RegExp(r'\s+'), ' ');
-      if (display.isEmpty) continue;
-      byKey.putIfAbsent(normalizeTeamName(display), () => display);
-    }
-    return byKey.values.toList()..sort();
-  }
-
-  /// Case-/whitespace-insensitive key used to decide that two opponent
-  /// strings are the same team.
-  static String normalizeTeamName(String name) =>
-      name.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
-
-  /// The game number the next game against [opponent] in [season] should
-  /// get. Source of truth is the saved pitch/event rows: every distinct
-  /// saved (season, game #) for that team counts as one recorded game, so
-  /// deleting a game (its rows disappear) lowers the next number, and a
-  /// blank New Game form (no rows yet) is never counted. Takes the larger
-  /// of "games recorded" and "highest saved game # + 1" so a gap in the
-  /// numbering (e.g. only Game 2 saved) can never produce a duplicate.
-  int nextGameNumberFor(String opponent, int season) {
-    final key = normalizeTeamName(opponent);
-    if (key.isEmpty) return 1;
-    final nums = <int>{};
-    for (final p in pitches) {
-      if (p.season == season && normalizeTeamName(p.game) == key) {
-        nums.add(p.gameNumber);
-      }
-    }
-    if (nums.isEmpty) return 1;
-    final highest = nums.reduce((a, b) => a > b ? a : b);
-    return nums.length >= highest ? nums.length + 1 : highest + 1;
-  }
+  List<String> get knownTeams =>
+      pitches.map((p) => p.game).toSet().toList()..sort();
 
   void setGame(String opponent, int gameNumber, [int? season]) {
     final changed = opponent != currentOpponent || gameNumber != currentGameNumber;
@@ -790,6 +774,7 @@ class AppSession extends ChangeNotifier {
       pitchNumInAB = 1;
       _paCounter = 0;
       currentInning = 1;
+      droppedThirdPending = false;
       _undoStack.clear();
     }
     notifyListeners();
@@ -838,6 +823,7 @@ class AppSession extends ChangeNotifier {
     balls = 0;
     strikes = 0;
     pitchNumInAB = 1;
+    droppedThirdPending = false; // choosing the next batter closes the play
     notifyListeners();
     _persistLive();
   }
@@ -1056,16 +1042,8 @@ class AppSession extends ChangeNotifier {
     double? yCoord,
     String? battedType,
     double er = 0,
-    bool droppedThirdStrike = false,
-    bool batterOut = false,
   }) async {
     if (currentUser == null || switchingPitcher) {
-      return PitchAddResult(endedAB: false, nextBattingOrder: battingOrderSlot);
-    }
-    // Dropped third strike: one strike-three pitch ('ss' or 'sl') thrown with
-    // two strikes already on the batter. Refuse anything else so a bad call
-    // can never create a strikeout out of thin air.
-    if (droppedThirdStrike && !(strikes == 2 && (call == 'ss' || call == 'sl'))) {
       return PitchAddResult(endedAB: false, nextBattingOrder: battingOrderSlot);
     }
     final snap = _captureSnapshot(); // the state BEFORE this pitch changes anything
@@ -1084,14 +1062,14 @@ class AppSession extends ChangeNotifier {
         strikes++;
         if (strikes >= 3) {
           endAB = true;
-          outcome = droppedThirdStrike ? PitchEvent.droppedThirdStrikeOutcome : 'k';
+          outcome = 'k';
         }
         break;
       case 'sl': // called strike (looking)
         strikes++;
         if (strikes >= 3) {
           endAB = true;
-          outcome = droppedThirdStrike ? PitchEvent.droppedThirdStrikeOutcome : 'kl';
+          outcome = 'kl';
         }
         break;
       case 'f': // foul
@@ -1119,10 +1097,6 @@ class AppSession extends ChangeNotifier {
       outs = (outs + 1).clamp(0, 3);
     } else if (outcome == 'dp') {
       outs = (outs + 2).clamp(0, 3);
-    } else if (outcome == PitchEvent.droppedThirdStrikeOutcome && batterOut) {
-      // A dropped third strike is the strikeout only — it adds an out ONLY
-      // when the person says the batter was actually put out on the play.
-      outs = (outs + 1).clamp(0, 3);
     }
 
     final ev = PitchEvent(
@@ -1202,6 +1176,177 @@ class AppSession extends ChangeNotifier {
       await _persist();
       return PitchAddResult(endedAB: false, nextBattingOrder: battingOrderSlot);
     }
+  }
+
+  /// DROP THIRD STRIKE. Records the pitch that was the dropped third strike as
+  /// ONE pitch (so the pitch count goes up once) and credits the pitcher with a
+  /// strikeout, exactly once.
+  ///
+  /// It NEVER records an out: the game's outs do not change, and the batter,
+  /// count and inning stay exactly as they were until
+  /// [resolveDroppedThirdStrike] says what happened on the play. Returns null on
+  /// success, or a short message explaining why nothing was recorded.
+  Future<String?> addDroppedThirdStrike({required String pitchType, bool swinging = true}) async {
+    if (currentUser == null || switchingPitcher) return 'Not ready yet. Try again in a moment.';
+    if (currentOpponent.isEmpty) return 'Start a game first.';
+    if (droppedThirdPending) {
+      return 'A dropped third strike is already waiting. Say what happened on that play first.';
+    }
+    if (strikes < 2) return 'A dropped third strike needs two strikes on the batter.';
+    final snap = _captureSnapshot(); // state BEFORE this event
+    final ev = PitchEvent(
+      id: _uuid.v4(),
+      userId: activePitcherId,
+      game: currentOpponent,
+      gameNumber: currentGameNumber,
+      batter: completedPAs,
+      batterNumber: committedJersey,
+      battingOrder: battingOrderSlot,
+      hand: hand,
+      eventType: 'pitch',
+      pitchNum: pitchNumInAB,
+      pitchType: pitchType,
+      call: swinging ? 'ss' : 'sl',
+      outcome: 'dk3', // strikeout credited; deliberately NOT an out
+      ab: 1,
+      outs: outs, // unchanged
+      er: 0,
+      xCoord: null,
+      yCoord: null,
+      battedType: null,
+      inning: currentInning,
+      paId: _paCounter,
+      season: currentSeason,
+    );
+    snap.pitchId = ev.id;
+    _undoStack.add(snap);
+    if (_undoStack.length > _maxUndo) _undoStack.removeAt(0);
+    pitches.add(ev);
+    completedPAs++; // the strikeout completes this plate appearance, counted once
+    droppedThirdPending = true;
+    notifyListeners();
+    await _persist();
+    return null;
+  }
+
+  /// Finishes a dropped third strike once the play is known.
+  ///  * [batterOut] false: the batter reached base. Nothing is recorded; the
+  ///    next batter comes up.
+  ///  * [batterOut] true: the batter was thrown out. This records ONE out, the
+  ///    same way the Throw Out button does, then the next batter comes up.
+  /// One Undo reverses all of it.
+  Future<void> resolveDroppedThirdStrike({required bool batterOut}) async {
+    if (currentUser == null || switchingPitcher || !droppedThirdPending) return;
+    final snap = _captureSnapshot();
+    if (batterOut) {
+      outs = (outs + 1).clamp(0, 3);
+      final ev = PitchEvent(
+        id: _uuid.v4(),
+        userId: activePitcherId,
+        game: currentOpponent,
+        gameNumber: currentGameNumber,
+        batter: completedPAs,
+        batterNumber: committedJersey,
+        battingOrder: battingOrderSlot,
+        hand: hand,
+        eventType: 'txo',
+        pitchNum: null,
+        pitchType: null,
+        call: 'txo',
+        outcome: 'txo',
+        ab: 0,
+        outs: outs,
+        er: 0,
+        xCoord: null,
+        yCoord: null,
+        battedType: null,
+        inning: currentInning,
+        paId: _paCounter,
+        season: currentSeason,
+      );
+      snap.pitchId = ev.id;
+      pitches.add(ev);
+      if (outs >= 3) {
+        outs = 0;
+        currentInning++;
+      }
+    }
+    _undoStack.add(snap); // pitchId stays null when no row was added
+    if (_undoStack.length > _maxUndo) _undoStack.removeAt(0);
+    droppedThirdPending = false;
+    // Next batter, fresh 0-0 count (the PA was already counted at the strikeout).
+    balls = 0;
+    strikes = 0;
+    pitchNumInAB = 1;
+    final wrap = battingOrderSlot >= lineupSize;
+    battingOrderSlot = wrap ? 1 : battingOrderSlot + 1;
+    final suggestedHand = lookupHandForSpot(battingOrderSlot);
+    if (suggestedHand != null) hand = suggestedHand;
+    committedJersey = lineupLocked ? lookupJerseyForSpot(battingOrderSlot) : null;
+    notifyListeners();
+    await _persist();
+  }
+
+  // ── Game numbering ────────────────────────────────────────────
+
+  /// Team names compare equal when they differ only in capitalization or extra
+  /// spaces ("Eureka", "EUREKA", " eureka  ").
+  static String normalizeTeamName(String name) =>
+      name.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+
+  /// Teams that appear in the saved games, one entry per team (the most recent
+  /// spelling is kept), alphabetical.
+  List<String> get previousTeamsPlayed {
+    final latest = <String, String>{};
+    for (final p in pitches) {
+      if (p.game.trim().isEmpty) continue;
+      latest[normalizeTeamName(p.game)] = p.game.trim().replaceAll(RegExp(r'\s+'), ' ');
+    }
+    return latest.values.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  }
+
+  /// The spelling to save a typed team name under: the existing one if this
+  /// team has been played before, so the games stay together.
+  String canonicalTeamName(String typed) {
+    final key = normalizeTeamName(typed);
+    for (var i = pitches.length - 1; i >= 0; i--) {
+      if (normalizeTeamName(pitches[i].game) == key) {
+        return pitches[i].game.trim().replaceAll(RegExp(r'\s+'), ' ');
+      }
+    }
+    return typed.trim().replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  /// The saved games against [team] in [season], oldest first. Built from the
+  /// saved pitch records, so deleted games are not included, and a New Game
+  /// form that was never used does not count.
+  List<SavedGameSummary> savedGamesVs(String team, {required int season}) {
+    final key = normalizeTeamName(team);
+    if (key.isEmpty) return const [];
+    final byNumber = <int, SavedGameSummary>{};
+    for (final p in pitches) {
+      if (p.season != season || normalizeTeamName(p.game) != key) continue;
+      final cur = byNumber[p.gameNumber];
+      byNumber[p.gameNumber] = SavedGameSummary(
+        gameNumber: p.gameNumber,
+        pitchCount: (cur?.pitchCount ?? 0) + (p.eventType == 'pitch' ? 1 : 0),
+        lastPlayed: (cur?.lastPlayed == null || p.timestamp.isAfter(cur!.lastPlayed!))
+            ? p.timestamp
+            : cur.lastPlayed,
+      );
+    }
+    return byNumber.values.toList()..sort((a, b) => a.gameNumber.compareTo(b.gameNumber));
+  }
+
+  /// The next game number against [team] in [season]: one more than the number
+  /// of saved games, but never a number already in use (for example if Game 2
+  /// was deleted but Game 3 still exists, the next one is Game 4). 1 for a
+  /// team that has never been played.
+  int nextGameNumberVs(String team, {required int season}) {
+    final games = savedGamesVs(team, season: season);
+    if (games.isEmpty) return 1;
+    final highest = games.last.gameNumber;
+    return (games.length > highest ? games.length : highest) + 1;
   }
 
   /// Shared implementation for the three "not a pitch" game-event buttons
@@ -1305,12 +1450,13 @@ class AppSession extends ChangeNotifier {
     if (_undoStack.isNotEmpty) {
       final snap = _undoStack.last;
       final idx = snap.pitchId == null ? -1 : pitches.lastIndexWhere((p) => p.id == snap.pitchId);
-      if (idx >= 0) {
-        // Exact restore: remove precisely the row this action added and put
-        // back every piece of live state as it was before it (including the
-        // previous batter, count, outs and inning when it ended an at-bat).
+      if (snap.pitchId == null || idx >= 0) {
+        // Exact restore: remove precisely the row this action added (a step
+        // with no row, like "batter reached", has none) and put back every
+        // piece of live state as it was before it, including the previous
+        // batter, count, outs and inning when it ended an at-bat.
         _undoStack.removeLast();
-        pitches.removeAt(idx);
+        if (idx >= 0) pitches.removeAt(idx);
         currentOpponent = snap.currentOpponent;
         currentGameNumber = snap.currentGameNumber;
         currentSeason = snap.currentSeason;
@@ -1325,6 +1471,7 @@ class AppSession extends ChangeNotifier {
         completedPAs = snap.completedPAs;
         lineupSize = snap.lineupSize;
         currentInning = snap.currentInning;
+        droppedThirdPending = snap.droppedPending;
         restored = true;
       } else {
         _undoStack.clear(); // its row no longer exists, so it can't be trusted
@@ -1426,4 +1573,12 @@ class AppSession extends ChangeNotifier {
     notifyListeners();
     _persistLive();
   }
+}
+
+/// One saved game against a team, for the New Game screen.
+class SavedGameSummary {
+  final int gameNumber;
+  final int pitchCount;
+  final DateTime? lastPlayed;
+  const SavedGameSummary({required this.gameNumber, required this.pitchCount, this.lastPlayed});
 }

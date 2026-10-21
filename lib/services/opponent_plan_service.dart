@@ -86,6 +86,7 @@ String outcomeLabel(String? o) => switch (o) {
       'hbp' => 'Hit by pitch',
       'k' => 'Strikeout (swinging)',
       'kl' => 'Strikeout (looking)',
+      'dk3' => 'Strikeout (dropped third strike)',
       'dk' => 'Dead ball',
       null => 'No result recorded',
       _ => (o ?? '').toUpperCase(),

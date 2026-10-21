@@ -1,0 +1,56 @@
+diff --git a/lib/screens/pitch_sequencing_screen.dart b/lib/screens/pitch_sequencing_screen.dart
+index c3b6095..9427f41 100644
+--- a/lib/screens/pitch_sequencing_screen.dart
++++ b/lib/screens/pitch_sequencing_screen.dart
+@@ -13,2 +13,4 @@ import '../widgets/sequence_breakdown.dart';
+ import '../services/sequence_scoring.dart';
++import '../services/sequence_analytics.dart';
++import '../widgets/sequence_analytics_view.dart';
+ 
+@@ -50,2 +52,3 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
+     final atBats = StatsService.sequencingByAtBat(data, history: session.filteredPitches);
++    final analytics = SequenceAnalytics.build(data);
+     final putAway = StatsService.putAwayPitch(data);
+@@ -140,18 +143,2 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
+ 
+-    if (seqs.isEmpty) {
+-      return Column(
+-        crossAxisAlignment: CrossAxisAlignment.stretch,
+-        children: [
+-          filterRow,
+-          const GlowCard(
+-            child: Padding(
+-              padding: EdgeInsets.all(24),
+-              child: Text('Not enough data yet (need 3-pitch sequences).',
+-                  style: TextStyle(color: Colors.grey)),
+-            ),
+-          ),
+-        ],
+-      );
+-    }
+-
+     final best = List<Map<String, dynamic>>.from(seqs)
+@@ -235,2 +222,16 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
+         const SizedBox(height: 8),
++        SequenceAnalyticsView(analytics: analytics),
++        const SizedBox(height: 8),
++        if (seqs.isEmpty)
++          GlowCard(
++            child: Padding(
++              padding: const EdgeInsets.all(12),
++              child: Text(
++                'Decision-score lists (Best Sequences / Sequences to Avoid) need finished at-bats with 3+ pitches; '
++                '${analytics.diagnostics.pasWith3Plus} found in this selection. The sections above still use every at-bat that is available.',
++                style: const TextStyle(color: Colors.grey),
++              ),
++            ),
++          )
++        else
+         ResponsiveRow(
+@@ -245,4 +246,4 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
+                     children: [
+-                      const Text('Best Sequences (Top 5)', style: TextStyle(fontWeight: FontWeight.w800)),
+-                      const Text('Ranked by Sequence Score - decision quality, not just results. Tap "Why this score" on a card.',
++                      const Text('Best Sequences by Decision Score (Top 5)', style: TextStyle(fontWeight: FontWeight.w800)),
++                      const Text('MODELED score with design-chosen weights (not validated, not a statistic). For measured results see Sequence effectiveness above. Tap "Why this score" on a card.',
+                           style: TextStyle(fontSize: 10.5, color: AppColors.colMuted, fontStyle: FontStyle.italic)),

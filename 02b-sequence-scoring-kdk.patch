@@ -1,0 +1,14 @@
+diff --git a/lib/services/sequence_scoring.dart b/lib/services/sequence_scoring.dart
+index 9a16a86..b2b0740 100644
+--- a/lib/services/sequence_scoring.dart
++++ b/lib/services/sequence_scoring.dart
+@@ -96,3 +96,3 @@ class SeqConfig {
+   static const Map<String, double> resultValue = {
+-    'k': 1.0, 'kl': 1.0, 'dp': 0.95, 'go': 0.78, 'fo': 0.72, 'lo': 0.65,
++    'k': 1.0, 'kl': 1.0, 'kdk': 1.0, 'dp': 0.95, 'go': 0.78, 'fo': 0.72, 'lo': 0.65,
+     'fc': 0.5, 'e': 0.5, 'hbp': 0.15, 'bb': 0.0,
+@@ -699,3 +699,3 @@ class SequenceScoring {
+         values['result'] = inPlay ? 0.5 + (raw - 0.5) * SeqConfig.inPlayShrink : raw;
+-        if (finalOutcome == 'k' || finalOutcome == 'kl') {
++        if (finalOutcome == 'k' || finalOutcome == 'kl' || finalOutcome == 'kdk') {
+           notes.add(const SeqNote(SeqPolarity.positive, 'result', 'result_k', 'Plate appearance ended in a strikeout.'));

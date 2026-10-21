@@ -338,7 +338,7 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
                   title: 'Count Tendencies',
                   description: composeHoldInfo(
                     what: 'Rows are pitch types; columns are counts (balls-strikes, with n = pitches thrown at that count). '
-                        'Each cell has three stacked blocks: STR% (top, how often the pitch was a strike), USE% (middle, how often it was chosen at that count) and BAA (bottom, batting average against).\n'
+                        'Each cell has two stacked blocks: STR% (top, how often the pitch was a strike) and BAA (bottom, batting average against).\n'
                         'Read across a row to see where a pitch is used; read down a column to compare pitches at one count. A "—" cell has no pitches.\n'
                         'The last row (ALL) is the BAA at each count with every pitch type combined: hits ÷ official at-bats whose final pitch was thrown at that count (walks and hit-by-pitches are not at-bats, and unfinished at-bats are left out).',
                     colorGuide: 'Each block is colored on its own, from dark green (best) to red (worst), using that stat\'s own cutoffs.\n'
@@ -348,7 +348,7 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
                   child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text('Count Tendencies', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
                     Text(
-                      'Each cell: Strike% (left) · Usage% (center) · BAA (right). Colors are scored independently on a 5-tier scale.',
+                      'Each cell: Strike% (top) · BAA (bottom). Colors are scored independently on a 5-tier scale.',
                       style: TextStyle(fontSize: 11, color: AppColors.colMuted, fontStyle: FontStyle.italic),
                     ),
                   ]),
@@ -475,7 +475,7 @@ class _MiniTag extends StatelessWidget {
       );
 }
 
-/// Larger, three-part-per-cell heat map: Strike% / Usage% / BAA, each
+/// Two-part-per-cell heat map: Strike% / BAA, each
 /// colored independently on the shared 5-tier perf scale (item 11).
 class _PitchUsageHeatmap extends StatelessWidget {
   final Map<String, dynamic> heatmap;
@@ -543,16 +543,14 @@ class _PitchUsageHeatmap extends StatelessWidget {
         );
       }
       final strikePct = c['strikePct'] as double?;
-      final usagePct = c['usagePct'] as double?;
       final baa = c['baa'] as double?;
       final strikeBg = perfHex('f_strike', strikePct);
-      final usageBg = perfHex('usage_predictability', usagePct);
       final baaBg = perfHex('AVG', baa);
       Color tc(Color bg) => (bg == AppColors.perfExcellent || bg == AppColors.perfPoor || bg == AppColors.perfBelowAvg)
           ? Colors.white
           : AppColors.colText;
       Widget third(Color bg, String label, String value, String statKey, String what, String? note) {
-        final shown = '${label == 'STR%' ? 'Strike %' : label == 'USE%' ? 'Usage %' : 'BAA'} at $count · ${pt.toUpperCase()}';
+        final shown = '${label == 'STR%' ? 'Strike %' : 'BAA'} at $count · ${pt.toUpperCase()}';
         return StatHoldInfo(
           title: shown,
           description: composeHoldInfo(
@@ -577,10 +575,6 @@ class _PitchUsageHeatmap extends StatelessWidget {
               'f_strike',
               'Strike %: of this pitch type thrown at this count, the share that were strikes (called, swinging or foul).',
               'Strike % here uses the same cutoffs as First-Pitch Strike % (F-Strike%).'),
-          third(usageBg, 'USE%', usagePct != null ? '${usagePct.toStringAsFixed(0)}' : '—',
-              'usage_predictability',
-              'Usage %: of all pitches thrown at this count, the share that were this pitch type.',
-              'Graded on the usage-predictability scale: leaning heavily on one pitch at a count is more predictable, so high usage trends toward orange/red.'),
           third(baaBg, 'BAA', baa != null ? _fmtAvg(baa) : '—',
               'AVG',
               'BAA (batting average against) for ONLY the pitches of this type thrown at this count: '

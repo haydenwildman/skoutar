@@ -94,6 +94,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
     'dk': 'Dead Ball',
   };
   static const Map<String, String> eventTypeFullNames = {
+    'dk3': 'Dropped Third Strike',
     'po': 'Pickoff',
     'to': 'Caught Stealing',
     'txo': 'Throw Out',
@@ -116,7 +117,8 @@ class _GameInputScreenState extends State<GameInputScreen> {
     'go': 'Ground Out', 'fo': 'Fly Out', 'lo': 'Line Out',
     'fc': "Fielder's Choice", 'dp': 'Double Play', 'e': 'Error',
     'bb': 'Walk', 'hbp': 'Hit By Pitch', 'k': 'Strikeout (Swinging)',
-    'kl': 'Strikeout (Looking)', 'kdk': 'Strikeout (Dropped 3rd)', 'dk': 'Dead Ball',
+    'kl': 'Strikeout (Looking)', 'dk': 'Dead Ball',
+    'dk3': 'Strikeout (Dropped 3rd, no out)',
     'po_out': 'Pickoff Out', 'to': 'Caught Stealing', 'txo': 'Throw Out',
     'bk': 'Balk',
   };
@@ -130,6 +132,8 @@ class _GameInputScreenState extends State<GameInputScreen> {
     'cs': 'Caught Stealing — runner thrown out attempting to steal',
     'to': 'Throw Out — runner/batter thrown out on a batted ball, not a standard GO/FO/LO out',
     'bk': 'Balk — illegal pitcher motion; logged only, no stat effect',
+    'dk3': 'Drop Third Strike — credits the pitcher with a strikeout and counts the pitch once. '
+        'It never records an out; you then say whether the batter reached base or was thrown out.',
   };
   static const Map<String, String> handFullNames = {
     'L': 'Left', 'R': 'Right', 'S': 'Switch',
@@ -154,7 +158,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
     'hbp': AppColors.perfPoor,
   };
   static const Map<String, String> eventActionLabels = {
-    'kdk': 'Drop Third Strike',
+    'dk3': 'Drop Third Strike',
     'po': 'Pickoff',
     'to': 'Caught Stealing',
     'txo': 'Throw Out',
@@ -256,22 +260,144 @@ class _GameInputScreenState extends State<GameInputScreen> {
     }
   }
 
+  /// Drop Third Strike step 1: which pitch was thrown. Only the pitcher's own
+  /// pitch types are offered (nothing is typed). Nothing is recorded until a
+  /// pitch is chosen, and recording it never records an out.
+  Future<void> _openDroppedThirdStrikeSheet() async {
+    final session = context.read<AppSession>();
+    var swinging = true;
+    final choice = await showModalBottomSheet<(String, bool)>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setSheetState) {
+        final types = session.customPitchTypes;
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text('Dropped third strike',
+                      style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Which pitch was thrown? This credits a strikeout. It does not record an out.',
+                    style: TextStyle(fontSize: 13, color: AppColors.colMuted),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(spacing: 8, children: [
+                    ChoiceChip(
+                      label: const Text('Swinging'),
+                      selected: swinging,
+                      onSelected: (_) => setSheetState(() => swinging = true),
+                    ),
+                    ChoiceChip(
+                      label: const Text('Looking'),
+                      selected: !swinging,
+                      onSelected: (_) => setSheetState(() => swinging = false),
+                    ),
+                  ]),
+                  const SizedBox(height: 12),
+                  if (types.isEmpty)
+                    const Text('Add a pitch type first (Add New Pitch), then come back.',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
+                  Wrap(spacing: 10, runSpacing: 10, children: [
+                    for (final pt in types)
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: 48, minWidth: 96),
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.pitchColor(pt),
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: () => Navigator.pop(ctx, (pt, swinging)),
+                          child: Text(session.pitchTypeLabel(pt),
+                              style: const TextStyle(fontWeight: FontWeight.w800)),
+                        ),
+                      ),
+                  ]),
+                  const SizedBox(height: 8),
+                  TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                ],
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+    if (choice == null || !mounted) return;
+    final message = await session.addDroppedThirdStrike(pitchType: choice.$1, swinging: choice.$2);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message ??
+          'Dropped third strike: strikeout credited. No out recorded. Say what happened on the play.'),
+      duration: const Duration(seconds: 3),
+    ));
+  }
+
+  /// Shown after a dropped third strike until the play is resolved.
+  Widget _droppedThirdStrikeCard(AppSession session) {
+    return _stageCard(
+      title: 'DROPPED THIRD STRIKE',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'The strikeout is credited to the pitcher and no out has been recorded. '
+            'What happened on the play?',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 14),
+          _bigButton(
+            'Batter reached base (no out)',
+            onTap: () => session.resolveDroppedThirdStrike(batterOut: false),
+            idleColor: Colors.white,
+          ),
+          const SizedBox(height: 10),
+          _bigButton(
+            'Batter thrown out (records 1 out)',
+            onTap: () => session.resolveDroppedThirdStrike(batterOut: true),
+            idleColor: Colors.white,
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Made a mistake? Undo removes the dropped third strike completely.',
+            style: TextStyle(fontSize: 12, color: AppColors.colMuted),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openNewGameDialog() async {
     final session = context.read<AppSession>();
     final newOpponentCtrl = TextEditingController();
     final newGameNumCtrl = TextEditingController(text: '1');
     int newYear = session.currentSeason;
-    final knownTeams = session.knownTeams;
-    String? pickedTeam;
-    // Fills Game # (and keeps it in step with the team + year) from the
-    // saved games, so it never has to be typed by hand.
-    void autoNumber() {
+    String? pickedTeam; // chosen from the previously played teams
+    var numberEdited = false; // once typed by hand, it is no longer overwritten
+
+    // The game number is generated from the saved games against this team.
+    void recomputeNumber() {
+      if (numberEdited) return;
+      final team = newOpponentCtrl.text;
       newGameNumCtrl.text =
-          session.nextGameNumberFor(newOpponentCtrl.text, newYear).toString();
+          team.trim().isEmpty ? '1' : '${session.nextGameNumberVs(team, season: newYear)}';
     }
+
+    final previousTeams = session.previousTeamsPlayed;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(builder: (ctx, setDialogState) {
+        final typedTeam = newOpponentCtrl.text.trim();
+        final earlier = typedTeam.isEmpty
+            ? const <SavedGameSummary>[]
+            : session.savedGamesVs(typedTeam, season: newYear);
+        final shownTeam = typedTeam.isEmpty ? '' : session.canonicalTeamName(typedTeam);
+        final numberText = int.tryParse(newGameNumCtrl.text.trim()) ?? 1;
         return AlertDialog(
           scrollable: true,
           title: const Text('Start New Game'),
@@ -285,18 +411,20 @@ class _GameInputScreenState extends State<GameInputScreen> {
                   style: TextStyle(color: AppColors.colMuted, fontSize: 12),
                 ),
                 const SizedBox(height: 12),
-                if (knownTeams.isNotEmpty) ...[
+                if (previousTeams.isNotEmpty) ...[
                   DropdownButtonFormField<String>(
                     isExpanded: true,
                     value: pickedTeam,
                     decoration: const InputDecoration(labelText: 'Previous Teams Played'),
-                    items: knownTeams
-                        .map((t) => DropdownMenuItem(value: t, child: Text(t, overflow: TextOverflow.ellipsis)))
-                        .toList(),
-                    onChanged: (v) => setDialogState(() {
-                      pickedTeam = v;
-                      newOpponentCtrl.text = v ?? '';
-                      autoNumber();
+                    hint: const Text('Pick a team you have played'),
+                    items: [
+                      for (final t in previousTeams)
+                        DropdownMenuItem(value: t, child: Text(t, overflow: TextOverflow.ellipsis)),
+                    ],
+                    onChanged: (t) => setDialogState(() {
+                      pickedTeam = t;
+                      newOpponentCtrl.text = t ?? '';
+                      recomputeNumber();
                     }),
                   ),
                   const SizedBox(height: 12),
@@ -304,17 +432,52 @@ class _GameInputScreenState extends State<GameInputScreen> {
                 TextField(
                   controller: newOpponentCtrl,
                   decoration: const InputDecoration(labelText: 'Team Name'),
-                  onChanged: (_) => setDialogState(autoNumber),
+                  onChanged: (_) => setDialogState(() {
+                    pickedTeam = null;
+                    recomputeNumber();
+                  }),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: newGameNumCtrl,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'Game #',
-                    helperText: 'Auto-numbered from your saved games — edit only to override',
+                    helperText: numberEdited
+                        ? 'Set by hand'
+                        : 'Generated automatically from your saved games. You can change it.',
+                    helperMaxLines: 2,
                   ),
+                  onChanged: (_) => setDialogState(() => numberEdited = true),
                 ),
+                if (shownTeam.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Will be recorded as: $shownTeam - Game $numberText',
+                        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+                  ),
+                ],
+                if (earlier.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Previous games vs $shownTeam in $newYear',
+                        style: const TextStyle(
+                            fontSize: 11, fontWeight: FontWeight.w800, color: AppColors.colMuted)),
+                  ),
+                  const SizedBox(height: 4),
+                  for (final g in earlier.reversed.take(6))
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Game ${g.gameNumber}'
+                        '${g.lastPlayed == null ? '' : ' · ${DateFormat('MMM d').format(g.lastPlayed!)}'}'
+                        ' · ${g.pitchCount} pitches',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                ],
                 const SizedBox(height: 12),
                 DropdownButtonFormField<int>(
                   isExpanded: true,
@@ -325,7 +488,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
                       .toList(),
                   onChanged: (v) => setDialogState(() {
                     newYear = v!;
-                    autoNumber();
+                    recomputeNumber();
                   }),
                 ),
               ],
@@ -346,15 +509,11 @@ class _GameInputScreenState extends State<GameInputScreen> {
       }),
     );
     if (confirmed == true) {
-      // Reuse the saved spelling of a team already on file ("EUREKA" ->
-      // "Eureka") so every game against it groups under one name.
-      final typed = newOpponentCtrl.text.trim();
-      final typedKey = AppSession.normalizeTeamName(typed);
-      final opponentName = knownTeams.firstWhere(
-          (t) => AppSession.normalizeTeamName(t) == typedKey,
-          orElse: () => typed);
-      session.setGame(opponentName,
-          int.tryParse(newGameNumCtrl.text) ?? session.nextGameNumberFor(opponentName, newYear), newYear);
+      // Saved under the spelling already used for this team, so "EUREKA" and
+      // "Eureka " land in the same team's games.
+      final team = session.canonicalTeamName(newOpponentCtrl.text);
+      session.setGame(
+          team, int.tryParse(newGameNumCtrl.text.trim()) ?? session.nextGameNumberVs(team, season: newYear), newYear);
       _selectedYear = newYear;
       _jerseyCtrl.clear();
       _nameCtrl.clear();
@@ -493,109 +652,6 @@ class _GameInputScreenState extends State<GameInputScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Pitch logged'), duration: Duration(milliseconds: 700)),
       );
-    }
-  }
-
-  /// Drop Third Strike: pick the pitch that was thrown, say whether the
-  /// batter was put out, then log ONE pitch row (so the pitch count moves
-  /// once) that credits the strikeout without adding an out by default.
-  Future<void> _openDroppedThirdStrike() async {
-    final session = context.read<AppSession>();
-    final messenger = ScaffoldMessenger.of(context);
-    if (session.strikes != 2) {
-      messenger.showSnackBar(const SnackBar(
-          content: Text('A dropped third strike needs a 2-strike count.')));
-      return;
-    }
-    if (session.customPitchTypes.isEmpty) {
-      messenger.showSnackBar(const SnackBar(
-          content: Text('Add a pitch type first (Add New Pitch).')));
-      return;
-    }
-    final pitchType = await showDialog<String>(
-      context: context,
-      builder: (ctx) => SimpleDialog(
-        title: const Text('Which pitch was thrown?'),
-        children: [
-          for (final pt in session.customPitchTypes)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(ctx, pt),
-              child: Row(children: [
-                Container(
-                    width: 6,
-                    height: 24,
-                    decoration: BoxDecoration(
-                        color: AppColors.pitchColor(pt), borderRadius: BorderRadius.circular(3))),
-                const SizedBox(width: 12),
-                Text(session.pitchTypeLabel(pt),
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-              ]),
-            ),
-        ],
-      ),
-    );
-    if (pitchType == null || !mounted) return;
-    var looking = false;
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Dropped third strike'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('The strikeout is credited either way. Was the batter put out?',
-                  style: TextStyle(fontSize: 13)),
-              const SizedBox(height: 12),
-              Wrap(spacing: 8, children: [
-                ChoiceChip(
-                    label: const Text('Swinging'),
-                    selected: !looking,
-                    onSelected: (_) => setDialogState(() => looking = false)),
-                ChoiceChip(
-                    label: const Text('Looking'),
-                    selected: looking,
-                    onSelected: (_) => setDialogState(() => looking = true)),
-              ]),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-            TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Batter safe (no out)')),
-            ElevatedButton(
-                onPressed: () => Navigator.pop(ctx, true), child: const Text('Batter out (+1 out)')),
-          ],
-        ),
-      ),
-    );
-    if (result == null || !mounted) return;
-    final res = await session.addPitch(
-      pitchType: pitchType.toLowerCase(),
-      call: looking ? 'sl' : 'ss',
-      droppedThirdStrike: true,
-      batterOut: result,
-    );
-    if (!mounted) return;
-    if (res.endedAB) {
-      _orderCtrl.text = res.nextBattingOrder.toString();
-      _lastSyncedOrder = res.nextBattingOrder;
-      _orderEdited = false;
-      _jerseyCtrl.clear();
-      _nameCtrl.clear();
-      setState(() {
-        _pitchType = null;
-        _call = null;
-        _stage = res.suggestedJersey == null ? _Stage.newBatter : _Stage.pitchType;
-      });
-      messenger.showSnackBar(SnackBar(
-        content: Text(result
-            ? 'Dropped third strike — strikeout + 1 out.'
-            : 'Dropped third strike — strikeout, no out recorded.'),
-        duration: const Duration(seconds: 2),
-      ));
     }
   }
 
@@ -862,8 +918,9 @@ class _GameInputScreenState extends State<GameInputScreen> {
   /// (game count, career total count) for a non-pitch event type
   /// (po / to / txo / bk).
   (int, int) _eventCounts(AppSession session, String eventType) {
-    final matches = eventType == PitchEvent.droppedThirdStrikeOutcome
-        ? session.pitches.where((p) => p.outcome == PitchEvent.droppedThirdStrikeOutcome)
+    // A dropped third strike is stored as a pitch row with outcome 'dk3'.
+    final matches = eventType == 'dk3'
+        ? session.pitches.where((p) => p.eventType == 'pitch' && p.outcome == 'dk3')
         : session.pitches.where((p) => p.eventType == eventType);
     final game = matches.where((p) => _isCurrentGame(p, session)).length;
     return (game, matches.length);
@@ -1624,6 +1681,9 @@ class _GameInputScreenState extends State<GameInputScreen> {
   }
 
   Widget _buildMainContent(AppSession session) {
+    if (session.droppedThirdPending && _stage != _Stage.history) {
+      return _droppedThirdStrikeCard(session);
+    }
     switch (_stage) {
       case _Stage.newBatter:
         return _buildBatterEntryStage(session);
@@ -1786,6 +1846,14 @@ class _GameInputScreenState extends State<GameInputScreen> {
             runSpacing: 8,
             children: [
               _eventTile(
+                eventCode: 'dk3',
+                session: session,
+                onTap: session.currentOpponent.isEmpty || session.droppedThirdPending
+                    ? null
+                    : _openDroppedThirdStrikeSheet,
+                tooltip: eventTooltips['dk3'],
+              ),
+              _eventTile(
                 eventCode: 'po',
                 session: session,
                 onTap: session.currentOpponent.isEmpty
@@ -1830,14 +1898,6 @@ class _GameInputScreenState extends State<GameInputScreen> {
                 // not the current/next one.
                 tooltip:
                     'THROW OUT applies to the LAST PLAY.\n${eventTooltips['to']}',
-              ),
-              _eventTile(
-                eventCode: 'kdk',
-                session: session,
-                onTap: session.currentOpponent.isEmpty ? null : _openDroppedThirdStrike,
-                tooltip:
-                    'Strike three was dropped. Credits the strikeout and logs the pitch, '
-                    'but records NO out unless you say the batter was put out.',
               ),
               _eventTile(
                 eventCode: 'bk',

@@ -64,11 +64,10 @@ class PitchEvent {
   /// Outcomes that count the batter as reaching base (hit).
   static const hitOutcomes = {'1b', '2b', '3b', 'hr'};
   static const walkOutcomes = {'bb'};
-  /// Dropped third strike: the pitcher is credited with a strikeout, but the
-  /// event itself records no out — the batter may reach first (see
-  /// [AppSession.addPitch], `droppedThirdStrike`).
-  static const droppedThirdStrikeOutcome = 'kdk';
-  static const kOutcomes = {'k', 'kl', droppedThirdStrikeOutcome};
+  /// Strikeouts credited to the pitcher. 'dk3' is a dropped third strike: a
+  /// strikeout for the pitcher that is NOT an out by itself, so it is
+  /// deliberately absent from every outs calculation.
+  static const kOutcomes = {'k', 'kl', 'dk3'};
   static const ballInPlayOutOutcomes = {'go', 'fo', 'lo', 'dp', 'fc'};
   static const damageOutcomes = {'2b', '3b', 'hr', 'bb', 'hbp', 'e'};
 

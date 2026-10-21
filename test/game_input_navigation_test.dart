@@ -81,6 +81,36 @@ void main() {
         expect(find.textContaining('HISTORY'), findsNothing);
       });
 
+      testWidgets('Drop Third Strike opens a pitch selector, records the pitch, never an out',
+          (tester) async {
+        final s = _session();
+        s.strikes = 2; // two strikes on the batter
+        await _pump(tester, w, s);
+
+        final tile = find.text('Drop Third Strike');
+        await tester.ensureVisible(tile);
+        await tester.tap(tile);
+        await tester.pumpAndSettle();
+
+        // The selector lists the pitcher's own pitch types.
+        expect(find.text('Dropped third strike'), findsOneWidget);
+        final pitchInSheet =
+            find.descendant(of: find.byType(BottomSheet), matching: find.text('Sinker'));
+        expect(pitchInSheet, findsOneWidget);
+
+        await tester.tap(pitchInSheet);
+        await tester.pumpAndSettle();
+
+        expect(s.pitches.length, 1);
+        expect(s.pitches.single.pitchType, 'sinker');
+        expect(s.pitches.single.outcome, 'dk3');
+        expect(s.outs, 0); // not an out
+        expect(s.currentGamePitchCount, 1);
+        // The screen now waits for what happened on the play.
+        expect(find.text('DROPPED THIRD STRIKE'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+
       testWidgets('Pitch Count is shown and starts at 0', (tester) async {
         final s = _session();
         await _pump(tester, w, s);

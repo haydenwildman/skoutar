@@ -296,6 +296,7 @@ String outcomeName(String? o) => switch (o) {
       'hbp' => 'Hit by pitch',
       'k' => 'Strikeout (swinging)',
       'kl' => 'Strikeout (looking)',
+      'dk3' => 'Strikeout (dropped third strike)',
       null => 'In progress',
       _ => o.toUpperCase(),
     };
