@@ -1,0 +1,1398 @@
+diff --git a/lib/screens/game_logs_screen.dart b/lib/screens/game_logs_screen.dart
+index 636d060..203e5bf 100644
+--- a/lib/screens/game_logs_screen.dart
++++ b/lib/screens/game_logs_screen.dart
+@@ -155,21 +155,23 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
+                 height: 240,
+                 child: spots.isEmpty
+                     ? const Center(child: Text('—', style: TextStyle(color: Colors.grey)))
+-                    // Give every game its own fixed width (instead of squeezing
+-                    // all of them into whatever the card happens to be) so dots
+-                    // and opponent labels stay legible, and scroll horizontally
+-                    // for games that don't fit — never crop the graph.
++                    // The chart always fills exactly the width its card has:
++                    // the old code reserved a fixed 76px per game and put the
++                    // chart in a horizontal scroll view, so every added game
++                    // widened it. Now the games share the available width, and
++                    // only the opponent LABELS are thinned (every Nth, always
++                    // including the latest game) when they would collide.
++                    // Every game keeps its dot; tap/hover shows any game.
+                     : LayoutBuilder(builder: (context, constraints) {
+-                        const perPoint = 76.0;
+-                        // (games + the two padding slots) * width per slot, plus the
+-                        // left axis column — so every dot keeps its full spacing.
+-                        final pointsWidth = (log.length - 1 + 2 * xPad) * perPoint + 40;
+-                        final chartWidth =
+-                            pointsWidth > constraints.maxWidth ? pointsWidth : constraints.maxWidth;
+-                        return SingleChildScrollView(
+-                          scrollDirection: Axis.horizontal,
+-                          child: SizedBox(
+-                            width: chartWidth,
++                        const leftAxis = 34.0; // matches leftTitles reservedSize
++                        const minLabelGap = 24.0; // px between rotated labels
++                        final slots = (maxIndex < 0 ? 0 : maxIndex) + 2 * xPad;
++                        final slotPx = ((constraints.maxWidth - leftAxis) / slots).clamp(1.0, 1000.0);
++                        final labelStep = (minLabelGap / slotPx).ceil().clamp(1, 1000);
++                        final dotRadius = slotPx >= 16 ? 5.0 : (slotPx >= 10 ? 3.5 : 2.5);
++                        final dotStroke = slotPx >= 10 ? 2.0 : 1.0;
++                        return SizedBox(
++                            width: constraints.maxWidth,
+                             height: 240,
+                             child: LineChart(
+                               LineChartData(
+@@ -197,9 +199,9 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
+                                 getDotPainter: (spot, percent, bar, index) {
+                                   final color = perfHex(perfStat, spot.y);
+                                   return FlDotCirclePainter(
+-                                    radius: 5,
++                                    radius: dotRadius,
+                                     color: color,
+-                                    strokeWidth: 2,
++                                    strokeWidth: dotStroke,
+                                     strokeColor: Colors.white,
+                                   );
+                                 },
+@@ -251,6 +253,10 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
+                                   if ((v - i).abs() > 0.01 || i < 0 || i >= log.length) {
+                                     return const SizedBox();
+                                   }
++                                  // Thin labels from the newest game backwards.
++                                  if ((log.length - 1 - i) % labelStep != 0) {
++                                    return const SizedBox();
++                                  }
+                                   return SideTitleWidget(
+                                     axisSide: meta.axisSide,
+                                     child: Transform.rotate(
+@@ -274,7 +280,6 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
+                           borderData: FlBorderData(show: false),
+                         ),
+                               ),
+-                            ),
+                           );
+                         }),
+               ),
+@@ -350,72 +355,6 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
+             ),
+           ),
+         ),
+-        Builder(builder: (context) {
+-          final cd = StatsService.countApproach(data);
+-          final gcs = StatsService.groupedCountStats(data);
+-          return GlowCard(
+-            child: Padding(
+-              padding: const EdgeInsets.all(12),
+-              child: Column(
+-                crossAxisAlignment: CrossAxisAlignment.stretch,
+-                children: [
+-                  const Text('Count & Approach Snapshot', style: TextStyle(fontWeight: FontWeight.w800)),
+-                  const SizedBox(height: 4),
+-                  const Text('How counts played out across these games — see the Count & Approach tab for full detail.',
+-                      style: TextStyle(fontSize: 11, color: AppColors.colMuted, fontStyle: FontStyle.italic)),
+-                  const SizedBox(height: 4),
+-                  PerfStatBar(
+-                    label: 'F-Strike%',
+-                    description: 'First-pitch strike percentage: plate appearances that started with a strike ÷ all plate appearances.',
+-                    value: cd['fpsPct'] != null ? '${cd['fpsPct']}%' : 'N/A',
+-                    color: perfHex('f_strike', cd['fpsPct'] as double?),
+-                    scaleHint: statScaleHint('f_strike'),
+-                    statKey: 'f_strike',
+-                    rawValue: cd['fpsPct'] as double?,
+-                  ),
+-                  PerfStatBar(
+-                    label: 'Ahead OBP',
+-                    description: 'On-base percentage allowed when the pitcher was ahead in the count.',
+-                    value: cd['aheadOBP'] != null ? (cd['aheadOBP'] as double).toStringAsFixed(3) : 'N/A',
+-                    color: perfHex('OBP_allowed', cd['aheadOBP'] as double?),
+-                    scaleHint: statScaleHint('OBP_allowed'),
+-                    statKey: 'OBP_allowed',
+-                    rawValue: cd['aheadOBP'] as double?,
+-                  ),
+-                  PerfStatBar(
+-                    label: 'Behind OBP',
+-                    description: 'On-base percentage allowed when the pitcher was behind in the count.',
+-                    value: cd['behindOBP'] != null ? (cd['behindOBP'] as double).toStringAsFixed(3) : 'N/A',
+-                    color: perfHex('OBP_allowed', cd['behindOBP'] as double?),
+-                    scaleHint: statScaleHint('OBP_allowed'),
+-                    statKey: 'OBP_allowed',
+-                    rawValue: cd['behindOBP'] as double?,
+-                  ),
+-                  PerfStatBar(
+-                    label: 'Two-Strike Count %',
+-                    description: 'Share of plate appearances that reached a two-strike count.',
+-                    colorNote: 'This bar is graded on the same cutoffs as First-Pitch Strike % (F-Strike%).',
+-                    value: gcs['twoStrikePct'] != null ? '${gcs['twoStrikePct']}%' : 'N/A',
+-                    color: perfHex('f_strike', gcs['twoStrikePct'] as double?),
+-                    scaleHint: statScaleHint('f_strike'),
+-                    statKey: 'f_strike',
+-                    rawValue: gcs['twoStrikePct'] as double?,
+-                  ),
+-                  PerfStatBar(
+-                    label: 'Hitter\'s Count %',
+-                    description: 'Share of plate appearances that reached a hitter\'s count (a count favoring the batter).',
+-                    colorNote: 'This bar is graded on the same cutoffs as Walk % (BB%), so a larger hitter\'s-count share trends toward orange/red.',
+-                    value: gcs['hittersCountPct'] != null ? '${gcs['hittersCountPct']}%' : 'N/A',
+-                    color: perfHex('BB_pct', gcs['hittersCountPct'] as double?),
+-                    scaleHint: statScaleHint('BB_pct'),
+-                    statKey: 'BB_pct',
+-                    rawValue: gcs['hittersCountPct'] as double?,
+-                  ),
+-                ],
+-              ),
+-            ),
+-          );
+-        }),
+       ],
+     );
+   }
+diff --git a/lib/screens/pitch_breakdown_screen.dart b/lib/screens/pitch_breakdown_screen.dart
+index 0ebf9e5..86d22b7 100644
+--- a/lib/screens/pitch_breakdown_screen.dart
++++ b/lib/screens/pitch_breakdown_screen.dart
+@@ -307,7 +307,7 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
+           // stat the table already had (Ball % rides with the Results view).
+           const viewOrder = <_ProfileView, List<String>>{
+             _ProfileView.results: ['BAA', 'Strike %', 'K%', 'BB%', 'Ball %'],
+-            _ProfileView.approach: ['Usage %', 'Take %', 'Swing %', 'Whiff %', 'Foul %'],
++            _ProfileView.approach: ['Take %', 'Swing %', 'Whiff %', 'Foul %'],
+             _ProfileView.contact: ['In Play %', 'Ground Ball %', 'Fly Ball %', 'Line Drive %'],
+           };
+           final byLabel = {for (final m in metrics) m.label: m};
+@@ -381,6 +381,7 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
+           Widget pitchLabelCell({
+             required String name,
+             required int pitches,
++            double? usagePct,
+             required Color color,
+             required String what,
+             required String colorGuide,
+@@ -389,7 +390,8 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
+               title: name,
+               description: composeHoldInfo(
+                 what: '$what\n\nPitch count: $pitches pitch${pitches == 1 ? '' : 'es'} thrown '
+-                    '(every recorded pitch of this type; at-bats, strikes and balls are not mixed into this number).',
++                    '(every recorded pitch of this type; at-bats, strikes and balls are not mixed into this number).'
++                    '${usagePct == null ? '' : '\n\n${_pitchMetricInfo['Usage %']}\n\nUsage: $usagePct%'}',
+                 colorGuide: colorGuide,
+               ),
+               child: Container(
+@@ -400,6 +402,14 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
+                   Text(name,
+                       textAlign: TextAlign.center,
+                       style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 11)),
++                  // Usage % sits right beside the pitch name (pitches of this
++                  // type / all pitches in the current filter).
++                  if (usagePct != null)
++                    FittedBox(
++                      fit: BoxFit.scaleDown,
++                      child: Text('$usagePct%',
++                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12)),
++                    ),
+                   const SizedBox(height: 3),
+                   Container(
+                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+@@ -524,7 +534,7 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
+                     border: TableBorder.all(color: AppColors.colBorder, width: 1),
+                     defaultVerticalAlignment: TableCellVerticalAlignment.fill,
+                     defaultColumnWidth: const FlexColumnWidth(1),
+-                    columnWidths: {0: narrow ? const FixedColumnWidth(56) : const FlexColumnWidth(0.9)},
++                    columnWidths: {0: narrow ? const FixedColumnWidth(62) : const FlexColumnWidth(0.9)},
+                     children: [
+                       TableRow(
+                         decoration: const BoxDecoration(color: AppColors.ink),
+@@ -574,6 +584,7 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
+                               pitchLabelCell(
+                                 name: (row['pitchType'] as String).toUpperCase(),
+                                 pitches: row['n'] as int,
++                                usagePct: row['usagePct'] as double?,
+                                 color: AppColors.pitchColor(row['pitchType'] as String),
+                                 what: 'This row shows every stat for this one pitch type. Tap the row to highlight it.',
+                                 colorGuide: pitchTypeColorGuide([row['pitchType'] as String]),
+diff --git a/lib/screens/pitch_sequencing_screen.dart b/lib/screens/pitch_sequencing_screen.dart
+index ad49588..b71a9c9 100644
+--- a/lib/screens/pitch_sequencing_screen.dart
++++ b/lib/screens/pitch_sequencing_screen.dart
+@@ -11,6 +11,8 @@ import '../services/color_guides.dart';
+ import '../widgets/year_filter_dropdown.dart';
+ import '../widgets/sequence_breakdown.dart';
+ import '../services/sequence_scoring.dart';
++import '../services/sequence_analytics.dart';
++import '../widgets/sequence_analytics_view.dart';
+ 
+ const String _seqScoreWhat =
+     'Score (0-100) rates the pitch-calling DECISIONS in the at-bats that opened this way (average of each at-bat\'s score), using only logged data - no velocity or location.\n'
+@@ -48,6 +50,7 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
+     }
+     final seqs = StatsService.pitchSequencing(data, history: session.filteredPitches);
+     final atBats = StatsService.sequencingByAtBat(data, history: session.filteredPitches);
++    final analytics = SequenceAnalytics.build(data);
+     final putAway = StatsService.putAwayPitch(data);
+     final firstPitchStrike = StatsService.firstPitchStrikeByType(data);
+     final teams = ['All', ...session.knownTeams];
+@@ -138,22 +141,6 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
+       ),
+     );
+ 
+-    if (seqs.isEmpty) {
+-      return Column(
+-        crossAxisAlignment: CrossAxisAlignment.stretch,
+-        children: [
+-          filterRow,
+-          const GlowCard(
+-            child: Padding(
+-              padding: EdgeInsets.all(24),
+-              child: Text('Not enough data yet (need 3-pitch sequences).',
+-                  style: TextStyle(color: Colors.grey)),
+-            ),
+-          ),
+-        ],
+-      );
+-    }
+-
+     final best = List<Map<String, dynamic>>.from(seqs)
+       ..sort((a, b) => (b['score'] as double).compareTo(a['score'] as double));
+     final worst = seqs.where((s) => (s['count'] as int) >= 3).toList()
+@@ -233,6 +220,20 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
+       children: [
+         filterRow,
+         const SizedBox(height: 8),
++        SequenceAnalyticsView(analytics: analytics),
++        const SizedBox(height: 8),
++        if (seqs.isEmpty)
++          GlowCard(
++            child: Padding(
++              padding: const EdgeInsets.all(12),
++              child: Text(
++                'Decision-score lists (Best Sequences / Sequences to Avoid) need finished at-bats with 3+ pitches; '
++                '${analytics.diagnostics.pasWith3Plus} found in this selection. The sections above still use every at-bat that is available.',
++                style: const TextStyle(color: Colors.grey),
++              ),
++            ),
++          )
++        else
+         ResponsiveRow(
+           crossAxisAlignment: CrossAxisAlignment.start,
+           children: [
+@@ -243,8 +244,8 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
+                   child: Column(
+                     crossAxisAlignment: CrossAxisAlignment.start,
+                     children: [
+-                      const Text('Best Sequences (Top 5)', style: TextStyle(fontWeight: FontWeight.w800)),
+-                      const Text('Ranked by Sequence Score - decision quality, not just results. Tap "Why this score" on a card.',
++                      const Text('Best Sequences by Decision Score (Top 5)', style: TextStyle(fontWeight: FontWeight.w800)),
++                      const Text('MODELED score with design-chosen weights (not validated, not a statistic). For measured results see Sequence effectiveness above. Tap "Why this score" on a card.',
+                           style: TextStyle(fontSize: 10.5, color: AppColors.colMuted, fontStyle: FontStyle.italic)),
+                       const SizedBox(height: 8),
+                       for (final s in best.take(5)) seqCard(s, true),
+diff --git a/lib/services/sequence_analytics.dart b/lib/services/sequence_analytics.dart
+new file mode 100644
+index 0000000..0508386
+--- /dev/null
++++ b/lib/services/sequence_analytics.dart
+@@ -0,0 +1,384 @@
++import 'dart:math' as math;
++
++import '../models/pitch_event.dart';
++import 'sequence_scoring.dart';
++
++/// Descriptive pitch-sequencing statistics built ONLY from what SKOUTAR
++/// records: pitch type, call, count and plate-appearance outcome. Nothing here
++/// needs velocity, movement or location, and nothing here uses a hand-picked
++/// weight.
++///
++/// DESCRIPTIVE statistics (counts, strike %, whiff %, BAA, K %, out %) are
++/// plain ratios of logged events, always shown with their sample size.
++///
++/// The ONE modeled number is the Wilson 95% lower bound on out rate used to
++/// RANK opening sequences (see [wilsonLower]). It has no tunable weights: it is
++/// the standard statistical confidence bound, so a sequence seen 3 times is
++/// ranked below one with the same out rate seen 30 times. It is a ranking aid,
++/// not a prediction.
++class SeqSampleSize {
++  /// Below this many pitches a pitch-level cell is flagged "small sample".
++  /// Display flag only; it never changes a number.
++  static const int smallPitches = 10;
++
++  /// Below this many plate appearances an opening-sequence row is flagged.
++  static const int smallPas = 5;
++}
++
++/// How a pitch ended its own pitch-level event.
++class PitchResults {
++  int n = 0, balls = 0, called = 0, swinging = 0, fouls = 0, inPlay = 0, hbp = 0;
++
++  void add(PitchEvent p) {
++    n++;
++    switch (p.call) {
++      case 'b':
++        balls++;
++        break;
++      case 'sl':
++        called++;
++        break;
++      case 'ss':
++        swinging++;
++        break;
++      case 'f':
++        fouls++;
++        break;
++      case 'ip':
++        inPlay++;
++        break;
++      case 'hbp':
++        hbp++;
++        break;
++    }
++  }
++
++  int get strikes => called + swinging + fouls + inPlay;
++  int get swings => swinging + fouls + inPlay;
++  double? get strikePct => n == 0 ? null : strikes / n * 100;
++  double? get whiffPct => swings == 0 ? null : swinging / swings * 100;
++  double? get ballPct => n == 0 ? null : balls / n * 100;
++  bool get small => n < SeqSampleSize.smallPitches;
++}
++
++/// Plate-appearance-level results (used per count, per transition, per sequence).
++class PaResults {
++  int pas = 0, k = 0, bb = 0, hbp = 0, hits = 0, ab = 0, outs = 0;
++
++  // 'dk3' (dropped third strike) is a strikeout for the pitcher but the batter
++  // may reach, so it is not counted as a batter retired.
++  static const _reach = {'1b', '2b', '3b', 'hr', 'bb', 'hbp', 'e', 'dk3'};
++
++  /// Adds one FINISHED plate appearance's outcome.
++  void addOutcome(String? o) {
++    if (o == null || o.isEmpty) return;
++    pas++;
++    if (PitchEvent.kOutcomes.contains(o)) k++;
++    if (o == 'bb') bb++;
++    if (o == 'hbp') hbp++;
++    if (o != 'bb' && o != 'hbp') ab++;
++    if (PitchEvent.hitOutcomes.contains(o)) hits++;
++    // Anything that is not a hit/walk/HBP/error/dropped third strike is a
++    // batter retired (a fielder's choice counts as an out).
++    if (!_reach.contains(o)) outs++;
++  }
++
++  double? get baa => ab == 0 ? null : hits / ab;
++  double? get kPct => pas == 0 ? null : k / pas * 100;
++  double? get bbPct => pas == 0 ? null : bb / pas * 100;
++  double? get outPct => pas == 0 ? null : outs / pas * 100;
++}
++
++/// Wilson score interval LOWER bound (z = 1.96 → 95%) for [successes]/[n].
++/// Returns a proportion in 0..1, or null when n == 0.
++double? wilsonLower(int successes, int n, {double z = 1.96}) {
++  if (n <= 0) return null;
++  final p = successes / n;
++  final z2 = z * z;
++  final denom = 1 + z2 / n;
++  final centre = p + z2 / (2 * n);
++  final margin = z * math.sqrt(p * (1 - p) / n + z2 / (4 * n * n));
++  return ((centre - margin) / denom).clamp(0.0, 1.0).toDouble();
++}
++
++/// Wilson score interval UPPER bound.
++double? wilsonUpper(int successes, int n, {double z = 1.96}) {
++  if (n <= 0) return null;
++  final p = successes / n;
++  final z2 = z * z;
++  final denom = 1 + z2 / n;
++  final centre = p + z2 / (2 * n);
++  final margin = z * math.sqrt(p * (1 - p) / n + z2 / (4 * n * n));
++  return ((centre + margin) / denom).clamp(0.0, 1.0).toDouble();
++}
++
++/// Results of the NEXT pitch after a given previous pitch type.
++class AfterPitchRow {
++  final String prevType;
++  final PitchResults next = PitchResults();
++  final Map<String, int> nextTypes = {};
++  AfterPitchRow(this.prevType);
++}
++
++/// One A → B pitch-type transition (B thrown right after A in the same PA).
++class TransitionRow {
++  final String from, to;
++  final PitchResults results = PitchResults(); // outcome of the B pitch
++  final PaResults paEnd = PaResults(); // only when B ended the plate appearance
++  TransitionRow(this.from, this.to);
++  int get n => results.n;
++}
++
++/// One ball-strike count (balls before the pitch, strikes before the pitch).
++class CountRow {
++  final int balls, strikes;
++  final PitchResults pitches = PitchResults();
++  final PaResults paEnd = PaResults(); // PAs whose FINAL pitch was thrown here
++  final Map<String, int> mix = {}; // pitch type -> pitches thrown at this count
++  CountRow(this.balls, this.strikes);
++  String get label => '$balls-$strikes';
++}
++
++/// Pitch-type usage inside one group of pitches (a count situation or a batter
++/// hand). Counts are plain tallies of logged pitches.
++class MixRow {
++  final String label;
++  final PitchResults pitches = PitchResults();
++  final PaResults paEnd = PaResults(); // PAs whose FINAL pitch is in this group
++  final Map<String, int> mix = {};
++  MixRow(this.label);
++  int get n => pitches.n;
++
++  /// (pitch type, share 0..1) pairs, most used first.
++  List<(String, double)> get shares {
++    final entries = mix.entries.toList()
++      ..sort((a, b) {
++        final c = b.value.compareTo(a.value);
++        return c != 0 ? c : a.key.compareTo(b.key);
++      });
++    return [for (final e in entries) (e.key, e.value / n)];
++  }
++
++  bool get small => n < SeqSampleSize.smallPitches;
++}
++
++/// An opening sequence (first [length] pitch types) over finished PAs.
++class SequenceRow {
++  final String label; // e.g. FB→CH→CV
++  final int length;
++  final PaResults pa = PaResults();
++  int strikePitches = 0; // of the length x pas opening pitches
++  SequenceRow(this.label, this.length);
++
++  int get n => pa.pas;
++  double? get strikePct => n == 0 ? null : strikePitches / (n * length) * 100;
++  double? get outLower => wilsonLower(pa.outs, n);
++  double? get outUpper => wilsonUpper(pa.outs, n);
++  bool get small => n < SeqSampleSize.smallPas;
++}
++
++/// Counts that explain WHY a metric is or is not available.
++class SequenceDiagnostics {
++  final int pitchRows; // eventType == 'pitch' rows received
++  final int plateAppearances; // reconstructed PAs (finished or not)
++  final int finishedPas;
++  final int pasWith2Plus;
++  final int pasWith3Plus; // finished AND 3+ pitches
++  final int transitions; // consecutive pitch pairs inside a PA
++  final int pitchesMissingType;
++  final int pitchesMissingCall;
++  const SequenceDiagnostics({
++    required this.pitchRows,
++    required this.plateAppearances,
++    required this.finishedPas,
++    required this.pasWith2Plus,
++    required this.pasWith3Plus,
++    required this.transitions,
++    required this.pitchesMissingType,
++    required this.pitchesMissingCall,
++  });
++}
++
++class SequenceAnalytics {
++  final SequenceDiagnostics diagnostics;
++  final List<AfterPitchRow> afterPitch; // by previous pitch type, n desc
++  final List<TransitionRow> transitions; // A→B, n desc
++  final List<CountRow> counts; // 12 counts in standard order (with data only)
++  final List<SequenceRow> openingTwo; // first two pitches, finished PAs
++  final List<SequenceRow> openingThree; // first three pitches, finished PAs
++  final List<MixRow> situations; // pitch usage by count situation (with data only)
++  final List<MixRow> byHand; // pitch usage / results by batter hand (with data only)
++
++  const SequenceAnalytics({
++    required this.diagnostics,
++    required this.afterPitch,
++    required this.transitions,
++    required this.counts,
++    required this.openingTwo,
++    required this.openingThree,
++    required this.situations,
++    required this.byHand,
++  });
++
++  bool get hasTransitions => transitions.isNotEmpty;
++  bool get hasCounts => counts.isNotEmpty;
++  bool get hasOpeningTwo => openingTwo.isNotEmpty;
++  bool get hasOpeningThree => openingThree.isNotEmpty;
++  bool get hasSituations => situations.isNotEmpty;
++  bool get hasHandSplit => byHand.length >= 2;
++
++  static String typeKey(PitchEvent p) {
++    final t = (p.pitchType ?? '').toLowerCase().trim();
++    return t.isEmpty ? 'other' : t;
++  }
++
++  /// [data] = pitch rows to analyse (already filtered by team/game/year).
++  /// Row order is irrelevant: plate appearances are rebuilt with
++  /// [SequenceScoring.splitPlateAppearances].
++  static SequenceAnalytics build(List<PitchEvent> data) {
++    final pitchRows = data.where((p) => p.eventType == 'pitch' && p.call != 'dk').toList();
++    final pas = SequenceScoring.splitPlateAppearances(data);
++
++    final after = <String, AfterPitchRow>{};
++    final trans = <String, TransitionRow>{};
++    final countMap = <String, CountRow>{};
++    final two = <String, SequenceRow>{};
++    final three = <String, SequenceRow>{};
++    final situ = <String, MixRow>{};
++    final hands = <String, MixRow>{};
++    var finished = 0, with2 = 0, with3 = 0, transitionCount = 0;
++
++    const strikeCalls = {'ss', 'sl', 'f', 'ip'};
++
++    for (final pa in pas) {
++      final done = pa.last.isFinalPitchOfPA;
++      if (done) finished++;
++      final cts = SequenceScoring.countsBefore(pa);
++
++      // By count: every pitch is credited to the count it was thrown in.
++      for (var i = 0; i < pa.length; i++) {
++        final (b, s) = cts[i];
++        final row = countMap.putIfAbsent('$b-$s', () => CountRow(b, s));
++        row.pitches.add(pa[i]);
++        final t = typeKey(pa[i]);
++        row.mix[t] = (row.mix[t] ?? 0) + 1;
++        final isLast = done && i == pa.length - 1;
++        if (isLast) row.paEnd.addOutcome(pa[i].outcome);
++
++        // Count situations use plain balls/strikes comparisons (no weights).
++        // A pitch can belong to more than one group (e.g. 0-2 is both
++        // "Ahead" and "Two strikes").
++        final groups = <String>[
++          if (b == 0 && s == 0) 'First pitch (0-0)',
++          if (s > b) 'Ahead (more strikes than balls)',
++          if (s == b && !(b == 0 && s == 0)) 'Even (same balls and strikes, after 0-0)',
++          if (b > s) 'Behind (more balls than strikes)',
++          if (s == 2) 'Two strikes',
++        ];
++        for (final g in groups) {
++          final m = situ.putIfAbsent(g, () => MixRow(g));
++          m.pitches.add(pa[i]);
++          m.mix[t] = (m.mix[t] ?? 0) + 1;
++          if (isLast) m.paEnd.addOutcome(pa[i].outcome);
++        }
++
++        // Batter hand is whatever was stored on the row (the app stores R when
++        // none was chosen, so an all-R split is not evidence of no lefties).
++        final h = (pa[i].hand).toUpperCase();
++        if (h == 'L' || h == 'R') {
++          final hm = hands.putIfAbsent(h, () => MixRow(h == 'L' ? 'Left-handed batters' : 'Right-handed batters'));
++          hm.pitches.add(pa[i]);
++          hm.mix[t] = (hm.mix[t] ?? 0) + 1;
++          if (isLast) hm.paEnd.addOutcome(pa[i].outcome);
++        }
++      }
++
++      // Pitch-to-pitch transitions inside the PA.
++      for (var i = 1; i < pa.length; i++) {
++        transitionCount++;
++        final a = typeKey(pa[i - 1]), bT = typeKey(pa[i]);
++        final ar = after.putIfAbsent(a, () => AfterPitchRow(a));
++        ar.next.add(pa[i]);
++        ar.nextTypes[bT] = (ar.nextTypes[bT] ?? 0) + 1;
++        final tr = trans.putIfAbsent('$a>$bT', () => TransitionRow(a, bT));
++        tr.results.add(pa[i]);
++        if (done && i == pa.length - 1) tr.paEnd.addOutcome(pa[i].outcome);
++      }
++
++      // Opening sequences need a finished PA so every row has a known result.
++      if (done) {
++        if (pa.length >= 2) {
++          with2++;
++          final label = pa.take(2).map((p) => typeKey(p).toUpperCase()).join('→');
++          final r = two.putIfAbsent(label, () => SequenceRow(label, 2));
++          r.pa.addOutcome(pa.last.outcome);
++          r.strikePitches += pa.take(2).where((p) => strikeCalls.contains(p.call)).length;
++        }
++        if (pa.length >= 3) {
++          with3++;
++          final label = pa.take(3).map((p) => typeKey(p).toUpperCase()).join('→');
++          final r = three.putIfAbsent(label, () => SequenceRow(label, 3));
++          r.pa.addOutcome(pa.last.outcome);
++          r.strikePitches += pa.take(3).where((p) => strikeCalls.contains(p.call)).length;
++        }
++      }
++    }
++
++    const order = [
++      '0-0', '0-1', '0-2', '1-0', '1-1', '1-2', '2-0', '2-1', '2-2', '3-0', '3-1', '3-2'
++    ];
++    final counts = [
++      for (final k in order)
++        if (countMap[k] != null) countMap[k]!,
++    ];
++
++    const situOrder = [
++      'First pitch (0-0)',
++      'Ahead (more strikes than balls)',
++      'Even (same balls and strikes, after 0-0)',
++      'Behind (more balls than strikes)',
++      'Two strikes',
++    ];
++    final situations = [
++      for (final k in situOrder)
++        if (situ[k] != null) situ[k]!,
++    ];
++    final byHand = [
++      for (final k in const ['R', 'L'])
++        if (hands[k] != null) hands[k]!,
++    ];
++
++    // Ranking: Wilson lower bound on out rate (higher = more reliably effective),
++    // then sample size, then label for a stable order.
++    int rank(SequenceRow a, SequenceRow b) {
++      final c = (b.outLower ?? -1).compareTo(a.outLower ?? -1);
++      if (c != 0) return c;
++      final n = b.n.compareTo(a.n);
++      return n != 0 ? n : a.label.compareTo(b.label);
++    }
++
++    return SequenceAnalytics(
++      diagnostics: SequenceDiagnostics(
++        pitchRows: pitchRows.length,
++        plateAppearances: pas.length,
++        finishedPas: finished,
++        pasWith2Plus: with2,
++        pasWith3Plus: with3,
++        transitions: transitionCount,
++        pitchesMissingType: pitchRows.where((p) => (p.pitchType ?? '').trim().isEmpty).length,
++        pitchesMissingCall: pitchRows.where((p) => (p.call ?? '').trim().isEmpty).length,
++      ),
++      afterPitch: after.values.toList()..sort((a, b) => b.next.n.compareTo(a.next.n)),
++      transitions: trans.values.toList()
++        ..sort((a, b) {
++          final c = b.n.compareTo(a.n);
++          return c != 0 ? c : '${a.from}>${a.to}'.compareTo('${b.from}>${b.to}');
++        }),
++      counts: counts,
++      openingTwo: two.values.toList()..sort(rank),
++      openingThree: three.values.toList()..sort(rank),
++      situations: situations,
++      byHand: byHand,
++    );
++  }
++}
+diff --git a/lib/services/sequence_scoring.dart b/lib/services/sequence_scoring.dart
+index 165cdd5..571f869 100644
+--- a/lib/services/sequence_scoring.dart
++++ b/lib/services/sequence_scoring.dart
+@@ -308,44 +308,76 @@ class SequenceScoring {
+   // ───────────────────── plate-appearance split ─────────────────────
+ 
+   /// Splits logged pitch rows into plate appearances, in chronological order.
+-  /// Same approach as BatterHistoryService: a PA is a run of pitches ending at
+-  /// the first pitch carrying an outcome; a change of the stored PA sequence
+-  /// number (`batter`) also starts a new PA. Dead-ball ('dk') rows are not
+-  /// pitches; a PA that ends on one is dropped (not an at-bat result).
++  ///
++  /// Reconstruction does NOT trust the order of [data]. Rows are grouped by
++  /// game (opponent + game # + season) and by the stored plate-appearance
++  /// sequence number (`batter`), then ordered inside each group by the stored
++  /// pitch number (`pitchNum`). Pitches are saved and reloaded in timestamp
++  /// order, so a row added with "Insert Row Above" (new timestamp) or rows
++  /// sharing a timestamp can come back in a different order than they were
++  /// thrown. Rebuilding from the stored keys keeps every plate appearance
++  /// whole in that case (the old approach cut a new PA every time the stored
++  /// sequence number changed between neighbouring rows, which shredded such
++  /// at-bats into 1-2 pitch fragments that could never form a 3-pitch
++  /// sequence).
++  ///
++  /// A PA ends at the first pitch carrying an outcome; any further rows with
++  /// the same sequence number start a new PA (duplicate/edited numbering).
++  /// Games are ordered by their earliest timestamp, PAs by sequence number.
++  /// Dead-ball ('dk') rows are not pitches; a PA that ends on one is dropped.
+   static List<List<PitchEvent>> splitPlateAppearances(List<PitchEvent> data) {
+-    final open = <String, List<PitchEvent>>{};
+-    final openSeq = <String, int>{};
+-    final all = <List<PitchEvent>>[];
+-    final voided = <List<PitchEvent>>{};
+-    for (final p in data) {
++    // gameKey -> batterSeq -> rows (with original index as a stable tiebreak)
++    final games = <String, Map<int, List<(int, PitchEvent)>>>{};
++    final gameFirst = <String, (DateTime, int)>{};
++    for (var i = 0; i < data.length; i++) {
++      final p = data[i];
+       if (p.eventType != 'pitch') continue;
+       final gk = '${p.game}|${p.gameNumber}|${p.season}';
+-      if (p.call == 'dk') {
+-        final cur = open[gk];
+-        if (cur != null && p.isFinalPitchOfPA) {
+-          voided.add(cur);
+-          open.remove(gk);
+-          openSeq.remove(gk);
++      games.putIfAbsent(gk, () => {}).putIfAbsent(p.batter, () => []).add((i, p));
++      final f = gameFirst[gk];
++      if (f == null || p.timestamp.isBefore(f.$1)) gameFirst[gk] = (p.timestamp, f?.$2 ?? i);
++    }
++    final gameOrder = games.keys.toList()
++      ..sort((a, b) {
++        final c = gameFirst[a]!.$1.compareTo(gameFirst[b]!.$1);
++        return c != 0 ? c : gameFirst[a]!.$2.compareTo(gameFirst[b]!.$2);
++      });
++
++    final out = <List<PitchEvent>>[];
++    for (final gk in gameOrder) {
++      final byBatter = games[gk]!;
++      final seqs = byBatter.keys.toList()..sort();
++      for (final seq in seqs) {
++        final rows = byBatter[seq]!
++          ..sort((a, b) {
++            final pa = a.$2.pitchNum, pb = b.$2.pitchNum;
++            if (pa != null && pb != null && pa != pb) return pa.compareTo(pb);
++            return a.$1.compareTo(b.$1);
++          });
++        var cur = <PitchEvent>[];
++        var voided = false;
++        void close() {
++          if (cur.isNotEmpty && !voided) out.add(cur);
++          cur = <PitchEvent>[];
++          voided = false;
+         }
+-        continue;
+-      }
+-      var cur = open[gk];
+-      if (cur == null || openSeq[gk] != p.batter) {
+-        cur = <PitchEvent>[];
+-        open[gk] = cur;
+-        openSeq[gk] = p.batter;
+-        all.add(cur);
+-      }
+-      cur.add(p);
+-      if (p.isFinalPitchOfPA) {
+-        open.remove(gk);
+-        openSeq.remove(gk);
++
++        for (final r in rows) {
++          final p = r.$2;
++          if (p.call == 'dk') {
++            if (p.isFinalPitchOfPA) {
++              voided = true;
++              close();
++            }
++            continue;
++          }
++          cur.add(p);
++          if (p.isFinalPitchOfPA) close();
++        }
++        close(); // an unfinished PA (no outcome yet) is kept as in-progress
+       }
+     }
+-    return [
+-      for (final pa in all)
+-        if (pa.isNotEmpty && !voided.contains(pa)) pa,
+-    ];
++    return out;
+   }
+ 
+   static int? _jerseyOf(List<PitchEvent> pa) {
+diff --git a/lib/widgets/sequence_analytics_view.dart b/lib/widgets/sequence_analytics_view.dart
+new file mode 100644
+index 0000000..42ba3fc
+--- /dev/null
++++ b/lib/widgets/sequence_analytics_view.dart
+@@ -0,0 +1,385 @@
++import 'package:flutter/material.dart';
++
++import '../services/color_guides.dart';
++import '../services/sequence_analytics.dart';
++import '../theme/app_theme.dart';
++import '../widgets/glow.dart';
++import '../widgets/stat_hold_info.dart';
++
++String _pct(double? v) => v == null ? '—' : '${v.toStringAsFixed(0)}%';
++String _frac(double? v) => v == null ? '—' : '${(v * 100).toStringAsFixed(0)}%';
++String _mixText(List<(String, double)> shares, {int top = 5}) =>
++    shares.take(top).map((e) => '${e.$1.toUpperCase()} ${(e.$2 * 100).toStringAsFixed(0)}%').join(' · ');
++
++String _avg(double? v) {
++  if (v == null) return '—';
++  final s = v.toStringAsFixed(3);
++  return s.startsWith('0.') ? s.substring(1) : s;
++}
++
++/// One labelled value. Wraps in a [Wrap] so nothing ever needs horizontal scroll.
++class _M extends StatelessWidget {
++  final String label, value;
++  const _M(this.label, this.value);
++
++  @override
++  Widget build(BuildContext context) {
++    return ConstrainedBox(
++      constraints: const BoxConstraints(minWidth: 52),
++      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
++        Text(label, style: const TextStyle(fontSize: 10, color: AppColors.colMuted, fontWeight: FontWeight.w700)),
++        Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
++      ]),
++    );
++  }
++}
++
++class _SmallFlag extends StatelessWidget {
++  final String text;
++  const _SmallFlag(this.text);
++
++  @override
++  Widget build(BuildContext context) => Container(
++        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
++        decoration: BoxDecoration(
++          border: Border.all(color: AppColors.brandOrangeDeep),
++          borderRadius: BorderRadius.circular(8),
++        ),
++        child: Text(text,
++            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: AppColors.brandOrangeDeep)),
++      );
++}
++
++class _Row extends StatelessWidget {
++  final String title;
++  final String? subtitle;
++  final List<_M> metrics;
++  final bool small;
++  final String smallText;
++  const _Row({
++    required this.title,
++    required this.metrics,
++    this.subtitle,
++    this.small = false,
++    this.smallText = 'small sample',
++  });
++
++  @override
++  Widget build(BuildContext context) {
++    return Container(
++      width: double.infinity,
++      margin: const EdgeInsets.only(bottom: 6),
++      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
++      decoration: BoxDecoration(
++        color: AppColors.surfaceAlt,
++        border: Border.all(color: AppColors.colBorder, width: 1.5),
++        borderRadius: BorderRadius.circular(8),
++      ),
++      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
++        Row(children: [
++          Expanded(
++            child: Text(title,
++                maxLines: 2,
++                overflow: TextOverflow.ellipsis,
++                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
++          ),
++          if (small) ...[const SizedBox(width: 6), _SmallFlag(smallText)],
++        ]),
++        if (subtitle != null)
++          Padding(
++            padding: const EdgeInsets.only(top: 2),
++            child: Text(subtitle!, style: const TextStyle(fontSize: 11, color: AppColors.colMuted)),
++          ),
++        const SizedBox(height: 6),
++        Wrap(spacing: 16, runSpacing: 6, children: metrics),
++      ]),
++    );
++  }
++}
++
++class _Section extends StatelessWidget {
++  final String title, what, blurb;
++  final List<Widget> children;
++  const _Section({required this.title, required this.what, required this.blurb, required this.children});
++
++  @override
++  Widget build(BuildContext context) {
++    return GlowCard(
++      child: Padding(
++        padding: const EdgeInsets.all(12),
++        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
++          StatHoldInfo(
++            title: title,
++            description: composeHoldInfo(what: what),
++            child: Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
++          ),
++          Padding(
++            padding: const EdgeInsets.only(top: 2, bottom: 8),
++            child: Text(blurb,
++                style: const TextStyle(fontSize: 11, color: AppColors.colMuted, fontStyle: FontStyle.italic)),
++          ),
++          ...children,
++        ]),
++      ),
++    );
++  }
++}
++
++/// All the descriptive sequencing sections. Each section renders on its own
++/// when it has data; a section without data explains exactly what is missing
++/// instead of hiding the whole screen.
++class SequenceAnalyticsView extends StatefulWidget {
++  final SequenceAnalytics analytics;
++  const SequenceAnalyticsView({super.key, required this.analytics});
++
++  @override
++  State<SequenceAnalyticsView> createState() => _SequenceAnalyticsViewState();
++}
++
++class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
++  int _openLen = 3;
++
++  @override
++  Widget build(BuildContext context) {
++    final a = widget.analytics;
++    final d = a.diagnostics;
++
++    // Default to the 2-pitch view when there are no 3-pitch openers at all.
++    final openLen = (_openLen == 3 && !a.hasOpeningThree && a.hasOpeningTwo) ? 2 : _openLen;
++    final openRows = openLen == 3 ? a.openingThree : a.openingTwo;
++
++    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
++      _Section(
++        title: 'Data used',
++        what: 'How many logged rows feed the sequencing analysis. Plate appearances are rebuilt from the stored '
++            'game, batter sequence number and pitch number, so the order rows were saved in does not matter. '
++            'Each metric below needs different data: counts and transitions work on any at-bat, '
++            'opening sequences need FINISHED at-bats with at least that many pitches.',
++        blurb: 'Everything below uses only pitch type, call, count and at-bat result.',
++        children: [
++          Wrap(spacing: 16, runSpacing: 6, children: [
++            _M('Pitches', '${d.pitchRows}'),
++            _M('Plate appearances', '${d.plateAppearances}'),
++            _M('Finished', '${d.finishedPas}'),
++            _M('Finished, 2+ pitches', '${d.pasWith2Plus}'),
++            _M('Finished, 3+ pitches', '${d.pasWith3Plus}'),
++            _M('Pitch-to-pitch pairs', '${d.transitions}'),
++          ]),
++          if (d.pitchesMissingType > 0 || d.pitchesMissingCall > 0)
++            Padding(
++              padding: const EdgeInsets.only(top: 8),
++              child: Text(
++                '${d.pitchesMissingType > 0 ? '${d.pitchesMissingType} pitch(es) have no pitch type (grouped as OTHER). ' : ''}'
++                '${d.pitchesMissingCall > 0 ? '${d.pitchesMissingCall} pitch(es) have no call and count as neither a strike nor a ball.' : ''}',
++                style: const TextStyle(fontSize: 11, color: AppColors.brandOrangeDeep),
++              ),
++            ),
++        ],
++      ),
++      const SizedBox(height: 8),
++      _Section(
++        title: 'Sequence effectiveness',
++        what: 'DESCRIPTIVE (plain ratios of logged at-bats): n, Out%, K%, BB%, BAA (hits ÷ official at-bats) and Strike% of the opening pitches.\n'
++            'MODELED (one number): "Out% floor" is the lower end of the 95% Wilson confidence interval for the out rate. '
++            'It has no hand-picked weights; it only asks "how low could the true out rate plausibly be given this many at-bats?" '
++            'and the list is ranked by it, so a sequence seen 3 times ranks below one with the same Out% seen 30 times. '
++            'It is a ranking aid, not a prediction or a claim that the sequence caused the result.\n'
++            'Out = batter retired (strikeouts, outs in play, fielder\'s choice); reaching base = hit, walk, HBP or error.',
++        blurb: 'Opening pitch types of finished at-bats, ranked by the Out% floor (95% Wilson). n = at-bats.',
++        children: [
++          SegmentedButton<int>(
++            showSelectedIcon: false,
++            segments: const [
++              ButtonSegment(value: 3, label: Text('First 3 pitches')),
++              ButtonSegment(value: 2, label: Text('First 2 pitches')),
++            ],
++            selected: {openLen},
++            onSelectionChanged: (s) => setState(() => _openLen = s.first),
++          ),
++          const SizedBox(height: 8),
++          if (openRows.isEmpty)
++            Text(
++              openLen == 3
++                  ? 'No finished at-bats with 3+ pitches in this selection (${d.pasWith3Plus} found, ${d.finishedPas} finished at-bats in total).'
++                  : 'No finished at-bats with 2+ pitches in this selection (${d.pasWith2Plus} found).',
++              style: const TextStyle(color: Colors.grey),
++            )
++          else
++            for (final r in openRows.take(12))
++              _Row(
++                title: r.label,
++                small: r.small,
++                smallText: 'n < ${SeqSampleSize.smallPas}',
++                metrics: [
++                  _M('n', '${r.n}'),
++                  _M('Out%', _pct(r.pa.outPct)),
++                  _M('Out% floor', _frac(r.outLower)),
++                  _M('K%', _pct(r.pa.kPct)),
++                  _M('BB%', _pct(r.pa.bbPct)),
++                  _M('BAA', r.pa.ab == 0 ? '—' : '${_avg(r.pa.baa)} (${r.pa.hits}/${r.pa.ab})'),
++                  _M('Strike%', _pct(r.strikePct)),
++                ],
++              ),
++          if (openRows.length > 12)
++            Text('Showing the top 12 of ${openRows.length} sequences.',
++                style: const TextStyle(fontSize: 11, color: AppColors.colMuted)),
++        ],
++      ),
++      const SizedBox(height: 8),
++      _Section(
++        title: 'Results after each pitch type',
++        what: 'For every pitch that was followed by another pitch in the same at-bat: what happened on that NEXT pitch. '
++            'Strike% = called + swinging + foul + in play ÷ pitches. Whiff% = swinging strikes ÷ swings (swinging + foul + in play). '
++            'Ball% = balls ÷ pitches. n = next pitches observed.',
++        blurb: 'Grouped by the pitch thrown before. n = next pitches.',
++        children: [
++          if (a.afterPitch.isEmpty)
++            Text('No at-bat has two or more pitches in this selection (${d.transitions} pitch-to-pitch pairs).',
++                style: const TextStyle(color: Colors.grey))
++          else
++            for (final r in a.afterPitch)
++              _Row(
++                title: 'After ${r.prevType.toUpperCase()}',
++                subtitle: 'Next pitch type: ${(r.nextTypes.entries.toList()..sort((x, y) => y.value.compareTo(x.value))).take(4).map((e) => '${e.key.toUpperCase()} ${e.value}').join(' · ')}',
++                small: r.next.small,
++                smallText: 'n < ${SeqSampleSize.smallPitches}',
++                metrics: [
++                  _M('n', '${r.next.n}'),
++                  _M('Strike%', _pct(r.next.strikePct)),
++                  _M('Whiff%', r.next.swings == 0 ? '—' : '${_pct(r.next.whiffPct)} (${r.next.swinging}/${r.next.swings})'),
++                  _M('Ball%', _pct(r.next.ballPct)),
++                  _M('In play', '${r.next.inPlay}'),
++                ],
++              ),
++        ],
++      ),
++      const SizedBox(height: 8),
++      _Section(
++        title: 'Pitch-to-pitch transitions',
++        what: 'Each row is one pitch type followed directly by another in the same at-bat (A → B). The numbers describe the B pitch: '
++            'Strike%, Whiff% (swinging strikes ÷ swings) and how many at-bats ended on B (with K and hits/AB for those). '
++            'n = times that transition happened.',
++        blurb: 'A → B, most frequent first. n = times thrown in that order.',
++        children: [
++          if (!a.hasTransitions)
++            const Text('No at-bat has two or more pitches in this selection.', style: TextStyle(color: Colors.grey))
++          else
++            for (final r in a.transitions.take(15))
++              _Row(
++                title: '${r.from.toUpperCase()} → ${r.to.toUpperCase()}',
++                small: r.n < SeqSampleSize.smallPitches,
++                smallText: 'n < ${SeqSampleSize.smallPitches}',
++                metrics: [
++                  _M('n', '${r.n}'),
++                  _M('Strike%', _pct(r.results.strikePct)),
++                  _M('Whiff%', r.results.swings == 0 ? '—' : '${_pct(r.results.whiffPct)} (${r.results.swinging}/${r.results.swings})'),
++                  _M('Ended AB', '${r.paEnd.pas}'),
++                  _M('K', '${r.paEnd.k}'),
++                  _M('Hits/AB', r.paEnd.ab == 0 ? '—' : '${r.paEnd.hits}/${r.paEnd.ab}'),
++                ],
++              ),
++          if (a.transitions.length > 15)
++            Text('Showing the 15 most frequent of ${a.transitions.length} transitions.',
++                style: const TextStyle(fontSize: 11, color: AppColors.colMuted)),
++        ],
++      ),
++      const SizedBox(height: 8),
++      _Section(
++        title: 'Performance by count',
++        what: 'Every pitch is credited to the count it was thrown in (balls-strikes before the pitch). '
++            'Strike%, Whiff% and Ball% describe those pitches. K / BB / BAA are for at-bats whose FINAL pitch was thrown at that count '
++            '(BAA = hits ÷ official at-bats; walks and HBP are not at-bats).',
++        blurb: 'All pitch types combined. n = pitches thrown at the count.',
++        children: [
++          if (!a.hasCounts)
++            const Text('No pitches logged in this selection.', style: TextStyle(color: Colors.grey))
++          else
++            for (final r in a.counts)
++              _Row(
++                title: r.label,
++                subtitle: 'Pitches thrown: ${_mixText([
++                      for (final e in (r.mix.entries.toList()
++                        ..sort((x, y) => y.value.compareTo(x.value))))
++                        (e.key, e.value / r.pitches.n),
++                    ])}',
++                small: r.pitches.small,
++                smallText: 'n < ${SeqSampleSize.smallPitches}',
++                metrics: [
++                  _M('n', '${r.pitches.n}'),
++                  _M('Strike%', _pct(r.pitches.strikePct)),
++                  _M('Whiff%', r.pitches.swings == 0 ? '—' : _pct(r.pitches.whiffPct)),
++                  _M('Ball%', _pct(r.pitches.ballPct)),
++                  _M('AB ended', '${r.paEnd.pas}'),
++                  _M('K', '${r.paEnd.k}'),
++                  _M('BB', '${r.paEnd.bb}'),
++                  _M('BAA', r.paEnd.ab == 0 ? '—' : '${_avg(r.paEnd.baa)} (${r.paEnd.hits}/${r.paEnd.ab})'),
++                ],
++              ),
++        ],
++      ),
++      const SizedBox(height: 8),
++      _Section(
++        title: 'Pitch selection by count situation',
++        what: 'How your pitch mix changes as the at-bat moves from early to late counts. '
++            'Ahead = more strikes than balls, Behind = more balls than strikes, Even = same number (after 0-0). '
++            'Two strikes overlaps with Ahead/Even/Behind because a 2-2 or 1-2 count is both. '
++            'The percentages are each pitch type\'s share of the pitches thrown in that situation; '
++            'Strike%, Whiff% and Ball% describe those same pitches.',
++        blurb: 'Each pitch is counted in the count it was thrown in. n = pitches.',
++        children: [
++          if (!a.hasSituations)
++            const Text('No pitches logged in this selection.', style: TextStyle(color: Colors.grey))
++          else
++            for (final r in a.situations)
++              _Row(
++                title: r.label,
++                subtitle: _mixText(r.shares),
++                small: r.small,
++                smallText: 'n < ${SeqSampleSize.smallPitches}',
++                metrics: [
++                  _M('n', '${r.n}'),
++                  _M('Strike%', _pct(r.pitches.strikePct)),
++                  _M('Whiff%', r.pitches.swings == 0 ? '—' : _pct(r.pitches.whiffPct)),
++                  _M('Ball%', _pct(r.pitches.ballPct)),
++                  _M('AB ended', '${r.paEnd.pas}'),
++                  _M('K', '${r.paEnd.k}'),
++                ],
++              ),
++        ],
++      ),
++      const SizedBox(height: 8),
++      _Section(
++        title: 'By batter handedness',
++        what: 'The same pitch mix and results split by the batter hand stored on each pitch (L or R). '
++            'The app stores R when no hand was chosen, so treat a split with very few left-handed pitches as thin data, not as proof of how you pitch to lefties.',
++        blurb: 'Shown only when both hands have logged pitches.',
++        children: [
++          if (!a.hasHandSplit)
++            Text(
++              a.byHand.isEmpty
++                  ? 'No pitches with a batter hand in this selection.'
++                  : 'Only ${a.byHand.first.label.toLowerCase()} have logged pitches in this selection, so there is nothing to compare yet.',
++              style: const TextStyle(color: Colors.grey),
++            )
++          else
++            for (final r in a.byHand)
++              _Row(
++                title: r.label,
++                subtitle: _mixText(r.shares),
++                small: r.small,
++                smallText: 'n < ${SeqSampleSize.smallPitches}',
++                metrics: [
++                  _M('n', '${r.n}'),
++                  _M('Strike%', _pct(r.pitches.strikePct)),
++                  _M('Whiff%', r.pitches.swings == 0 ? '—' : _pct(r.pitches.whiffPct)),
++                  _M('Ball%', _pct(r.pitches.ballPct)),
++                  _M('PA ended', '${r.paEnd.pas}'),
++                  _M('K%', _pct(r.paEnd.kPct)),
++                  _M('BAA', r.paEnd.ab == 0 ? '—' : '${_avg(r.paEnd.baa)} (${r.paEnd.hits}/${r.paEnd.ab})'),
++                ],
++              ),
++        ],
++      ),
++    ]);
++  }
++}
+diff --git a/test/pitch_profiles_test.dart b/test/pitch_profiles_test.dart
+index 5d31318..2e9afde 100644
+--- a/test/pitch_profiles_test.dart
++++ b/test/pitch_profiles_test.dart
+@@ -107,9 +107,13 @@ void main() {
+ 
+     await t.tap(find.text('Approach'));
+     await t.pumpAndSettle();
+-    for (final l in ['Usage %', 'Take %', 'Swing %', 'Whiff %', 'Foul %']) {
++    for (final l in ['Take %', 'Swing %', 'Whiff %', 'Foul %']) {
+       expect(hasHeader(l), isTrue, reason: l);
+     }
++    // Usage is no longer its own column: it sits beside each pitch name.
++    expect(hasHeader('Usage %'), isFalse);
++    final fb = StatsService.pitchBreakdown(_data).firstWhere((r) => r['pitchType'] == 'fb');
++    expect(find.text('${fb['usagePct']}%'), findsWidgets);
+     expect(hasHeader('BAA'), isFalse);
+     expect(find.text('Pitch'), findsOneWidget);
+ 
+diff --git a/test/sequence_analytics_test.dart b/test/sequence_analytics_test.dart
+new file mode 100644
+index 0000000..35f10a7
+--- /dev/null
++++ b/test/sequence_analytics_test.dart
+@@ -0,0 +1,194 @@
++import 'package:flutter_test/flutter_test.dart';
++import 'package:pitching_analytics/models/pitch_event.dart';
++import 'package:pitching_analytics/services/sequence_analytics.dart';
++import 'package:pitching_analytics/services/sequence_scoring.dart';
++
++int _id = 0;
++int _seq = 0;
++final _t0 = DateTime(2026, 4, 1, 12);
++
++/// One plate appearance from (type, call[, outcome]) tuples. [tsOffset] lets a
++/// test give rows timestamps that do NOT match the order they were thrown.
++List<PitchEvent> pa(
++  List<(String, String, String?)> pitches, {
++  int game = 1,
++  String hand = 'R',
++  List<int>? tsOffset,
++}) {
++  _seq++;
++  var n = 0;
++  return [
++    for (final p in pitches)
++      PitchEvent(
++        id: '${_id++}',
++        userId: 'u',
++        game: 'Opp',
++        gameNumber: game,
++        batter: _seq,
++        batterNumber: 7,
++        battingOrder: 1,
++        hand: hand,
++        eventType: 'pitch',
++        pitchNum: ++n,
++        pitchType: p.$1,
++        call: p.$2,
++        outcome: p.$3,
++        ab: 0,
++        outs: 0,
++        er: 0,
++        xCoord: null,
++        yCoord: null,
++        battedType: null,
++        inning: 1,
++        paId: _seq,
++        season: 2026,
++        timestamp: _t0.add(Duration(seconds: _seq * 100 + (tsOffset?[n - 1] ?? n))),
++      ),
++  ];
++}
++
++void main() {
++  test('Wilson lower bound: same out rate, bigger sample ranks higher; n=0 is null', () {
++    final small = wilsonLower(3, 4)!; // 75% of 4
++    final big = wilsonLower(30, 40)!; // 75% of 40
++    expect(big, greaterThan(small));
++    expect(wilsonLower(0, 0), isNull);
++    expect(wilsonLower(10, 10)!, lessThan(1.0));
++    expect(wilsonUpper(0, 10)!, greaterThan(0.0));
++  });
++
++  test('plate appearances are rebuilt even when rows are shuffled', () {
++    final a = pa([('fb', 'sl', null), ('cv', 'ss', null), ('cv', 'ss', 'k')]);
++    final b = pa([('fb', 'b', null), ('ch', 'ss', null), ('fb', 'ip', 'go')]);
++    final shuffled = [a[2], b[1], a[0], b[2], a[1], b[0]]; // interleaved, out of order
++    final pas = SequenceScoring.splitPlateAppearances(shuffled);
++    expect(pas.length, 2);
++    expect(pas.map((p) => p.length).toList(), [3, 3]);
++    expect(pas[0].map((p) => p.pitchNum).toList(), [1, 2, 3]);
++  });
++
++  test('a row inserted later (newer timestamp) still lands in its own at-bat in pitch order', () {
++    // Pitch 2 of the at-bat was added afterwards with Insert Row, so it reloads
++    // with the newest timestamp and comes back AFTER the final pitch.
++    final rows = pa(
++      [('fb', 'sl', null), ('cv', 'ss', null), ('cv', 'ss', 'k')],
++      tsOffset: [1, 900, 3],
++    );
++    final loaded = [...rows]..sort((x, y) => x.timestamp.compareTo(y.timestamp));
++    expect(loaded.map((p) => p.pitchNum).toList(), [1, 3, 2]); // reload order is wrong
++    final pas = SequenceScoring.splitPlateAppearances(loaded);
++    expect(pas.length, 1);
++    expect(pas.single.map((p) => p.pitchNum).toList(), [1, 2, 3]);
++    final a = SequenceAnalytics.build(loaded);
++    expect(a.diagnostics.pasWith3Plus, 1);
++    expect(a.openingThree.single.label, 'FB→CV→CV');
++  });
++
++  test('dropped third strike counts as a strikeout but not as an out by itself', () {
++    final rows = pa([('fb', 'sl', null), ('cv', 'ss', null), ('cv', 'ss', 'dk3')]);
++    final a = SequenceAnalytics.build(rows);
++    final r = a.openingThree.single;
++    expect(r.pa.k, 1);
++    expect(r.pa.outs, 0);
++    expect(SequenceScoring.scoreAll(rows).single.score, isNotNull);
++  });
++
++  test('2-pitch metrics are available when there are no 3-pitch at-bats', () {
++    final rows = [
++      ...pa([('fb', 'ss', null), ('ch', 'ip', 'go')]),
++      ...pa([('fb', 'b', null), ('ch', 'ip', '1b')]),
++      ...pa([('fb', 'sl', null), ('sl', 'ss', null)]), // unfinished
++    ];
++    final a = SequenceAnalytics.build(rows);
++    expect(a.diagnostics.pasWith3Plus, 0);
++    expect(a.hasOpeningThree, isFalse);
++    expect(a.hasOpeningTwo, isTrue);
++    expect(a.openingTwo.single.label, 'FB→CH');
++    expect(a.openingTwo.single.n, 2);
++    expect(a.openingTwo.single.pa.hits, 1);
++    expect(a.openingTwo.single.pa.outs, 1);
++    expect(a.hasTransitions, isTrue);
++    expect(a.hasCounts, isTrue);
++  });
++
++  test('transition and after-pitch statistics are plain ratios with sample sizes', () {
++    final rows = [
++      ...pa([('fb', 'sl', null), ('ch', 'ss', null), ('ch', 'f', null), ('fb', 'ip', 'fo')]),
++      ...pa([('fb', 'sl', null), ('ch', 'b', null), ('fb', 'ss', null), ('ch', 'ss', 'k')]),
++    ];
++    final a = SequenceAnalytics.build(rows);
++    final fbCh = a.transitions.firstWhere((t) => t.from == 'fb' && t.to == 'ch');
++    expect(fbCh.n, 3);
++    expect(fbCh.results.swinging, 2);
++    expect(fbCh.results.balls, 1);
++    expect(fbCh.results.strikePct, closeTo(200 / 3, 0.001));
++    final afterFb = a.afterPitch.firstWhere((r) => r.prevType == 'fb');
++    expect(afterFb.next.n, 3); // three fb→ch pairs
++    expect(afterFb.nextTypes['ch'], 3);
++    expect(afterFb.next.whiffPct, closeTo(100, 0.001)); // 2 swings, both swinging strikes
++  });
++
++  test('count table credits each pitch to the count it was thrown in', () {
++    final rows = pa([('fb', 'b', null), ('fb', 'ss', null), ('ch', 'f', null), ('ch', 'ip', 'go')]);
++    final a = SequenceAnalytics.build(rows);
++    final labels = a.counts.map((c) => c.label).toList();
++    expect(labels, ['0-0', '1-0', '1-1', '1-2']);
++    final last = a.counts.last;
++    expect(last.pitches.n, 1);
++    expect(last.paEnd.pas, 1);
++    expect(last.paEnd.outs, 1);
++  });
++
++  test('pitch mix is grouped by count situation, each pitch in the count it was thrown in', () {
++    // counts before each pitch: 0-0, 1-0, 1-1, 1-2
++    final rows = pa([('fb', 'b', null), ('fb', 'ss', null), ('ch', 'f', null), ('ch', 'ip', 'go')]);
++    final a = SequenceAnalytics.build(rows);
++    final labels = a.situations.map((r) => r.label).toList();
++    expect(labels.first, 'First pitch (0-0)');
++    MixRow g(String start) => a.situations.firstWhere((r) => r.label.startsWith(start));
++    expect(g('First pitch').mix, {'fb': 1});
++    expect(g('Behind').mix, {'fb': 1}); // 1-0
++    expect(g('Even').mix, {'ch': 1}); // 1-1
++    expect(g('Ahead').mix, {'ch': 1}); // 1-2
++    expect(g('Two strikes').mix, {'ch': 1}); // 1-2 is also a two-strike count
++    expect(g('Two strikes').paEnd.outs, 1); // the at-bat ended on that pitch
++    expect(a.counts.last.mix, {'ch': 1});
++    expect(g('Ahead').shares.single.$2, closeTo(1.0, 1e-9));
++  });
++
++  test('batter hand split only appears when both hands have pitches', () {
++    final rOnly = SequenceAnalytics.build(pa([('fb', 'ss', null), ('ch', 'ip', 'go')]));
++    expect(rOnly.byHand.length, 1);
++    expect(rOnly.hasHandSplit, isFalse);
++
++    final both = SequenceAnalytics.build([
++      ...pa([('fb', 'ss', null), ('ch', 'ip', 'go')]),
++      ...pa([('fb', 'b', null), ('cv', 'ss', 'k')], hand: 'L'),
++    ]);
++    expect(both.hasHandSplit, isTrue);
++    expect(both.byHand.map((r) => r.label).toList(),
++        ['Right-handed batters', 'Left-handed batters']);
++    expect(both.byHand.last.n, 2);
++    expect(both.byHand.last.paEnd.k, 1);
++    expect(both.byHand.first.paEnd.outs, 1);
++  });
++
++  test('rows that share one timestamp (bulk add/import) still rebuild whole at-bats', () {
++    final rows = pa(
++      [('fb', 'sl', null), ('cv', 'ss', null), ('ch', 'sl', null), ('cv', 'ss', 'k')],
++      tsOffset: [5, 5, 5, 5],
++    );
++    // Same timestamp: a database ordering by id can return them in any order.
++    final loaded = [rows[2], rows[0], rows[3], rows[1]];
++    final pas = SequenceScoring.splitPlateAppearances(loaded);
++    expect(pas.length, 1);
++    expect(pas.single.map((p) => p.pitchNum).toList(), [1, 2, 3, 4]);
++    expect(SequenceAnalytics.build(loaded).diagnostics.pasWith3Plus, 1);
++  });
++
++  test('empty input gives empty sections, not an exception', () {
++    final a = SequenceAnalytics.build(const []);
++    expect(a.diagnostics.pitchRows, 0);
++    expect(a.hasTransitions || a.hasCounts || a.hasOpeningTwo || a.hasOpeningThree, isFalse);
++  });
++}

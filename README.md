@@ -1,196 +1,81 @@
-# SKOUTAR — Flutter Port
+# SKOUTAR – Game Logs / Pitch Profiles / Pitch Sequencing fixes
 
-A Flutter/Dart recreation of the original R Shiny pitching analytics app (now branded SKOUTAR) —
-same feature set, same navigation, same color system and statistical
-formulas, rebuilt as a cross-platform app for **Windows, iOS, Android, and
-Web**.
+Made against `haydenwildman/skoutar`, branch `main`, commit `900cd37` ("Rebuild SKOUTAR with Supabase key").
+Nothing was committed or pushed. No Supabase credentials, auth, database or config files were touched.
 
----
+## IMPORTANT: what was and was not verified
+- I could read and clone the repo, but my environment has **no Dart or Flutter SDK** (and cannot download one).
+- So `dart format`, `flutter analyze` and `flutter test` were **NOT run**. Nothing here has been compiled.
+- What I did check: every edited file has balanced brackets, and `skoutar_changes.patch` applies cleanly (`git apply --check`) to a fresh clone of `main`.
+- Please run the commands in step 4 below before trusting any of it. If analyze or a test fails, send me the exact output and I will fix it.
 
-## 1. What's in this project
+## What changed
 
-```
-lib/
-  main.dart                     Entry point — wires services, shows Login or Home
-  theme/
-    app_theme.dart              Exact color ports of the R app's CSS variables
-  models/
-    user.dart                   Account model (tier/status enums)
-    pitch_event.dart            One logged pitch/pickoff row (mirrors the R CSV schema)
-  services/
-    storage_service.dart        Local JSON persistence (shared_preferences)
-    auth_service.dart           Login/signup (Supabase Auth)
-    app_session.dart            App-wide state + live game-input state machine
-    stats_service.dart          *All* statistical formulas, ported from the R app
-  widgets/
-    baseball_field_painter.dart CustomPainter recreation of draw_field()
-    sidebar_nav.dart            Collapsible sidebar navigation
-    stat_vbox.dart               Colored stat box / legend chip widgets
-  screens/
-    login_screen.dart / signup_screen.dart
-    home_shell.dart             Sidebar + content-switching shell
-    game_input_screen.dart      Live pitch logging (counts, outs, pitch tree, spray tap)
-    overview_screen.dart        Season/game stat boxes (ERA, WHIP, AVG, K%, etc.)
-    pitch_breakdown_screen.dart Usage% chart + pitch arsenal table
-    count_approach_screen.dart  Ahead/Behind/Even OBP buckets (Plus)
-    spray_chart_screen.dart     Filterable spray chart
-    game_logs_screen.dart       Per-game log table + ERA/WHIP/K% trend lines
-    pitch_sequencing_screen.dart 3-pitch sequence analysis + put-away pitch (Plus)
-    scouting_report_screen.dart Opponent-specific report + key hitters (Plus)
-    edit_raw_data_screen.dart   Editable/deletable table of every logged pitch
-    edit_at_bats_screen.dart    Pick a ball-in-play row, tap the field to (re)plot it
-```
+### Fix 1 – Pitch Breakdown > Pitch Profiles > Approach  (`lib/screens/pitch_breakdown_screen.dart`)
+- The separate **Usage %** column is gone from the Approach view (it now shows Take %, Swing %, Whiff %, Foul %).
+- Each pitch row's label cell now shows the pitch name and its usage % together (for example `FB` over `40.9%`), above the pitch-count pill.
+- The value is the existing `usagePct` from `StatsService.pitchBreakdown` (pitches of that type / total pitches in the current filter). Nothing is hardcoded.
+- The label cell is shared by all three views, so usage also shows in Results and Contact. The OVERALL row keeps only its total pitch count.
+- Phone label column widened from 56 to 62 px so the percentage fits.
+- Untouched: the summary cards, the Usage % bar chart above the table, the press-and-hold info (it now also explains Usage).
 
-## 2. Formulas preserved exactly
+### Fix 2 – Game Logs line charts  (`lib/screens/game_logs_screen.dart`)
+- Actual cause: each chart reserved a fixed 76 px per game and sat inside a horizontal `SingleChildScrollView`, so every added game made it wider.
+- Now each chart fills exactly the width of its card and the games share that width. No horizontal scrolling.
+- They are still the same three line charts, same data, same dot colors, same tooltips. No games or points are dropped.
+- When games get crowded: opponent labels are thinned (every Nth, always including the newest game) and dots shrink slightly. Tap or hover any dot to see its game.
+- Note: the third chart in your repo is titled **"K% by Game"**, not "Ks by Game". I kept the existing chart and title.
 
-Per the project brief, `lib/services/stats_service.dart` is a deliberate,
-close port of the R app's calculation logic — **not** a rewrite:
+### Fix 3 – Game Logs  (`lib/screens/game_logs_screen.dart`)
+- Removed the "Count & Approach Snapshot" card. Nothing was left behind in the layout.
+- `StatsService.countApproach` / `groupedCountStats` are untouched; the Count & Approach tab and Scouting Report still use them.
 
-- `perfHex()` reproduces `perf_hex()`'s exact piecewise thresholds for ERA,
-  WHIP, K%, BB%, Whiff%, F-Strike%, K-BB%, AVG, and OBP-allowed color tiers.
-- `overview()` reproduces `ov_stats`: IP from out-counting (including
-  pickoffs/throwouts as outs), ERA = runs×9/IP, WHIP = (BB+H)/IP,
-  AVG = H/AB, SLG = TB/AB, K% / BB% / K-BB% off plate appearances,
-  Whiff% = whiffs/swings.
-- `gameLog()`, `pitchBreakdown()`, `pitchSequencing()`, `putAwayPitch()`,
-  and `countApproach()` are direct ports of the corresponding R reactives
-  (`game_log_data`, `pitch_sum`, `seq_data`, and `cnt_data`).
+### Fix 4 – Pitch Sequencing "not enough data"
+Files: `lib/services/sequence_scoring.dart`, new `lib/services/sequence_analytics.dart`, new `lib/widgets/sequence_analytics_view.dart`, `lib/screens/pitch_sequencing_screen.dart`.
 
-**One structural simplification, called out honestly:** the R app
-reconstructs plate-appearance boundaries *after the fact* from a flat
-pitch-by-pitch CSV (see `process_data()`'s `pa_start`/`pa_id` logic). This
-Flutter port instead assigns a plate-appearance id **at write time**, from
-the live game-state machine in `AppSession.addPitch()` — since the app
-itself controls pitch entry in real time, this is simpler and numerically
-equivalent, but it means imported/bulk CSV data would need a small importer
-to backfill `paId` correctly (not included here).
+**Cause.** I cannot see your Supabase data, so I could not observe it failing. What the code shows:
+1. The whole screen was replaced by "Not enough data yet" whenever the one scored-sequence list (finished at-bats with 3+ pitches) was empty. That hid every other metric.
+2. Plate appearances were rebuilt by walking rows in reload order and cutting a new at-bat whenever the stored `batter` number changed between neighbouring rows. Rows are reloaded sorted by `ts`, then random `id`. Rows from **Add Row / Insert Row Above** in Edit Raw Data get a new timestamp (and `paId` 0), and bulk-created rows can share a timestamp. Those come back out of order, and the at-bats get cut into 1-2 pitch fragments that can never form a 3-pitch sequence. Counts like ERA/WHIP do not depend on order, which fits only sequencing breaking.
+This is the most likely mechanism, not a confirmed diagnosis for your database. The new "Data used" card at the top of the screen shows pitches, plate appearances, finished, finished with 2+ and 3+ pitches, so you can see immediately what your data contains.
 
-## 3. What's simplified vs. the R app (read this before assuming 100% parity)
+**Fix.**
+- `splitPlateAppearances` now groups by game and stored batter sequence number and orders by stored pitch number, so reload order no longer matters. An at-bat ends at the first pitch with an outcome. Rows with `call == 'dk'` are still not pitches.
+- The screen is never replaced by one message. New sections each show on their own and say exactly what is missing when they cannot be calculated: Data used, Sequence effectiveness (first 2 or first 3 pitches), Results after each pitch type, Pitch-to-pitch transitions, Performance by count (with pitch mix per count), Pitch selection by count situation (first pitch / ahead / even / behind / two strikes), and By batter handedness (only when both hands have pitches).
+- All numbers are plain ratios of stored rows with sample sizes (n) and a small-sample flag. The only modeled number is the Wilson 95% lower bound on Out% used to rank opening sequences (no hand-picked weights). The old 0-100 Decision Score lists remain below and are now labelled as modeled.
+- Missing optional fields do not discard pitches (missing pitch type is grouped as OTHER; missing call counts as neither strike nor ball). Sequences never cross game or at-bat boundaries.
+- A dropped third strike (`dk3`) counts as a strikeout but not as an out by itself in the new tables.
+- Caveat: the app stores batter hand `R` when none was chosen, so a split with very few L pitches is thin data.
+- Existing at-bat review, put-away pitch, first-pitch strike, and Count Tendencies are unchanged.
 
-This is an honest list — the original R app is a very large, mature
-Shiny application (2,600+ lines of server logic alone). A faithful,
-production-grade Flutter port of *everything* — the CSV import/export
-workflows, PDF report generation, lineup-cycling edge cases, the
-canvas-based spray modal, lock/unlock animations, lineup persistence
-across app restarts beyond the current session, lineup-of-9 wraparound
-prompts, lineup restore from history — is a multi-week engineering
-project, not a single pass. What you have here is a **complete,
-compilable architecture** with:
+### Tests (not run)
+- New `test/sequence_analytics_test.dart`: shuffled rows, inserted row with a newer timestamp, identical timestamps, dropped third strike, 2-pitch-only data, transitions, counts, count situations and mix, hand split, empty input.
+- `test/pitch_profiles_test.dart`: the Approach header test now expects Take/Swing/Whiff/Foul % and **no** Usage % header, plus usage % shown.
 
-- ✅ Full auth (login/signup) and tiered access (Basic/Plus)
-- ✅ All statistical formulas ported faithfully (see above)
-- ✅ All 11 feature screens present and functional, wired to real data
-- ✅ Cross-platform persistence (no native DB plugin required)
-- ✅ The spray-chart field rendered via a custom Canvas painter, matching
-  the R `draw_field()` geometry
-- 🟡 Simplified: PDF export (not included — see §5), CSV import/export
-  (not included), lineup auto-restore across sessions, multi-game
-  "predictability heatmap," and some visual polish (animations, mobile
-  drawer transitions)
-- 🟡 Simplified: charts use `fl_chart` rather than a pixel-identical
-  ggplot recreation — data and axes are correct, styling is close but not
-  identical
+## Files in this ZIP
+`files/` holds complete replacement files at the same paths as your project, plus `skoutar_changes.patch` (the same changes as one unified diff).
 
-## 4. Setup
+## Apply to `C:\SKOUTAR\SKOUTAR` (PowerShell)
+1. Extract the ZIP somewhere else, e.g. `C:\SKOUTAR_fixes`, and review it.
+2. Safety copy: `git -C C:\SKOUTAR\SKOUTAR stash -u` if you have uncommitted work, or copy the folder.
+3. Either copy the files:
+   `Copy-Item -Recurse -Force C:\SKOUTAR_fixes\files\* C:\SKOUTAR\SKOUTAR\`
+   (only if your local copies of those 8 files match `main` @ 900cd37; otherwise use the patch)
+   or use the patch from the project root:
+   `git apply --check C:\SKOUTAR_fixes\skoutar_changes.patch` then `git apply C:\SKOUTAR_fixes\skoutar_changes.patch`
+   If it fails, `git apply --3way ...` or send me the failing file.
+4. Test:
+   `cd C:\SKOUTAR\SKOUTAR`
+   `dart format lib test`
+   `flutter analyze`
+   `flutter test test/sequence_analytics_test.dart test/pitch_profiles_test.dart test/sequence_scoring_test.dart`
+   `flutter test`
+   `flutter run -d windows`
+5. Check by eye: Pitch Breakdown > Approach (no Usage column, % beside pitch names); Game Logs (add games or narrow the window, no sideways scroll, no Approach Snapshot); Pitch Sequencing (open "Data used", then each section).
 
-1. Install the [Flutter SDK](https://docs.flutter.dev/get-started/install)
-   (stable channel, 3.22+ recommended).
-2. From the project root:
-   ```bash
-   flutter pub get
-   ```
-3. Run `flutter doctor` and resolve any platform-specific toolchain
-   warnings (Xcode for iOS, Android Studio/SDK for Android, Visual Studio
-   with "Desktop development with C++" for Windows).
+## Also in your repo
+`01-…`, `02a-…`, `03a-…` `.patch` files from an earlier round are committed in the repo root but were not applied to `lib/`. I reused only the sequencing ideas from 01/02a/03c (reviewed, then extended and corrected, for example `dk3` instead of `kdk`). I did not use the Game Logs patch (04) or 03a/03b/02b.
 
-## 5. Running
-
-```bash
-flutter run                 # picks a connected device/emulator
-flutter run -d chrome        # Web
-flutter run -d windows        # Windows desktop
-```
-
-**Accounts:** users sign up in the app (Supabase Auth). The in-app Admin Panel
-has been removed; any manual account/tier changes are made in the Supabase
-dashboard.
-
-## 6. Building release binaries
-
-```bash
-flutter build apk --release          # Android
-flutter build ios --release          # iOS (requires macOS + Xcode, then archive in Xcode)
-flutter build windows --release      # Windows
-flutter build web --release          # Web (output in build/web)
-```
-
-## 7. Billing / getting paid (read this before launching)
-
-**This app cannot charge real money as-is** — and that's intentional, not
-a bug. Charging money requires a backend you control (to verify payments
-via webhooks) plus a Stripe and/or Apple/Google developer account; none
-of that can live safely inside a client app, and a client can never be
-trusted to self-report "I paid."
-
-Pricing is centralized in `lib/services/billing_service.dart`:
-```dart
-PricingConfig.basicMonthlyPriceUsd  // 4.99
-PricingConfig.plusMonthlyPriceUsd   // 9.99
-```
-Change the two numbers there and every screen that shows a price
-(currently: the signup plan cards) updates automatically.
-
-`billing_service.dart` also has a `BillingService` stub with the two
-methods you'll need (`startCheckout`, `restorePurchases`) and detailed
-TODO comments on what real implementation goes where:
-
-- **Web / Windows** → Stripe Checkout. Your backend creates a Checkout
-  Session (Stripe secret key lives server-side only) and the app opens
-  the returned URL.
-- **iOS / Android** → Apple/Google require using their In-App Purchase
-  system for subscriptions bought inside a native app. The practical way
-  to do this without hand-rolling receipt validation is
-  [RevenueCat](https://www.revenuecat.com/), which wraps both platforms'
-  IAP behind one API and can also forward Stripe web purchases into the
-  same entitlement system.
-- **Either way**, the payment provider notifies **your backend** via
-  webhook when a payment succeeds/renews/cancels, and your backend is
-  what flips a user's `tier`/`status` — the same
-  fields you can also edit by hand in the Supabase dashboard. Once you have that
-  backend, swap `StorageService`'s user storage for calls to it (see
-  §8), and have it push status changes down to the app.
-
-Until real billing is wired up, `AuthService.signUp()` marks new
-accounts `active` immediately (see the comment right above that line)
-so the app remains fully testable end-to-end. Flip that one line to
-`pendingPayment` once your webhook handler exists.
-
-## 8. Extending this further
-
-- **Swap storage**: everything talks to `StorageService`. Replace its
-  body with `sqflite`/`drift` (mobile/desktop) or a REST/Firebase backend
-  without touching any screen code.
-- **PDF export**: add the `pdf` and `printing` packages and build report
-  widgets analogous to the R app's `make_gamelog_pdf`/`make_spray_pdf`.
-- **CSV import/export**: add `csv` + `file_picker` (mobile/desktop) or
-  `file_selector` (web) and map rows to/from `PitchEvent.toJson()`.
-- **Bulk-import plate-appearance reconstruction**: if you add CSV import,
-  port the R `process_data()` PA-boundary logic (pitch_num==1 OR previous
-  outcome ends a PA) to backfill `paId` for imported rows.
-
-## 9. Known dependencies
-
-See `pubspec.yaml`. Kept intentionally minimal (no native SQL plugin, no
-platform channels) so that `flutter pub get` + `flutter run` should work
-out of the box on every target platform without extra native setup.
-
-## Pitch Sequencing score (SKOUTAR)
-
-`lib/services/sequence_scoring.dart` scores each plate appearance 0-100 from
-data the app already records (no velocity/movement/location):
-Count management 30 · Batter matchup 25 · Setup & response 20 ·
-Predictability 10 · Result 15 (edit `SeqWeights` / `SeqConfig`). Missing
-components are dropped and the remaining weights re-normalised; the UI shows
-coverage and confidence. The Pitch Sequencing tab explains every score
-("Why this score", At-Bat Review). Weights and thresholds are initial
-product-design values, not validated.
+## Known limitations
+- Not compiled, formatted, analyzed or tested (see top).
+- Fix 4's root cause is inferred from code, not observed in your data.
+- Chart label thinning and dot sizes were chosen by calculation, not by looking at the rendered chart.
