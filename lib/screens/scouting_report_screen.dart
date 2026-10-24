@@ -586,7 +586,11 @@ class _ScoutingReportBodyState extends State<_ScoutingReportBody> {
           Expanded(child: SituationalPlanCard(r.plan)),
         ]),
         // ── Spray chart + Adjustment Notes ────────────────────────
-        ResponsiveRow(crossAxisAlignment: CrossAxisAlignment.stretch, stackedCrossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        // NOTE: start (not stretch). This row sits in the app shell's vertical
+        // scroll view, whose height is unbounded; a stretching Row cannot lay
+        // out there and made the content around Adjustment Notes overlap or
+        // vanish. Each card now sizes to its own content.
+        ResponsiveRow(crossAxisAlignment: CrossAxisAlignment.start, stackedCrossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Expanded(
             child: GlowCard(
               child: Padding(

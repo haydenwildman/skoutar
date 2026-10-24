@@ -136,6 +136,11 @@ class PerfStatBar extends StatelessWidget {
   /// the bar borrows another stat's scale).
   final String? colorNote;
 
+  /// Makes the number the clear focal point: a larger value, slightly more
+  /// readable benchmark text and a little less vertical padding. Off by
+  /// default so every other screen looks exactly as before.
+  final bool prominent;
+
   const PerfStatBar({
     super.key,
     required this.label,
@@ -146,6 +151,7 @@ class PerfStatBar extends StatelessWidget {
     this.statKey,
     this.scaleHint,
     this.colorNote,
+    this.prominent = false,
   });
 
   String? _holdText(bool graded) {
@@ -178,13 +184,13 @@ class PerfStatBar extends StatelessWidget {
       title: label,
       description: _holdText(graded),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 9),
+        padding: EdgeInsets.symmetric(vertical: prominent ? 7 : 9),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Header row: small stat name on the left, the ACTUAL value large
             // and bold on the right.
-            StatHeaderRow(label: label, value: value),
+            StatHeaderRow(label: label, value: value, valueBoost: prominent ? 8 : 0),
             const SizedBox(height: 6),
             // Graded stat: tier-colored scale with a marker at the real value.
             // Plain counts: neutral full bar (no text inside - the number
@@ -203,8 +209,8 @@ class PerfStatBar extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 scaleHint!,
-                style: const TextStyle(
-                  fontSize: 10.5,
+                style: TextStyle(
+                  fontSize: prominent ? 12 : 10.5,
                   fontWeight: FontWeight.w600,
                   color: AppColors.colMuted,
                 ),
@@ -239,7 +245,18 @@ class StatHeaderRow extends StatelessWidget {
   final String label;
   final String value;
   final bool compact;
-  const StatHeaderRow({super.key, required this.label, required this.value, this.compact = false});
+
+  /// Extra logical pixels added to the value's font size (0 = the standard
+  /// size every other screen uses). The FittedBox below still scales the value
+  /// down if the row is too narrow, so a larger boost can never overflow.
+  final double valueBoost;
+  const StatHeaderRow({
+    super.key,
+    required this.label,
+    required this.value,
+    this.compact = false,
+    this.valueBoost = 0,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -273,7 +290,7 @@ class StatHeaderRow extends StatelessWidget {
               maxLines: 1,
               softWrap: false,
               style: TextStyle(
-                fontSize: statValueFontSize(context, compact: compact),
+                fontSize: statValueFontSize(context, compact: compact) + valueBoost,
                 fontWeight: FontWeight.w900,
                 height: 1.1,
                 color: hasValue ? AppColors.ink : AppColors.colMuted,

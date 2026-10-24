@@ -124,6 +124,35 @@ Widget _table(List<String> headers, List<List<Widget>> rows, {List<double>? flex
   );
 }
 
+/// Cards in two columns (1 and 2 on the first row, 3 and 4 under them, ...) when
+/// the section is at least [minWidth] wide, otherwise stacked in one column.
+///
+/// Each card sizes to its own content: the columns use start alignment (never
+/// stretch), because this sits inside the app shell's vertical scroll view
+/// whose height is unbounded, and cards should not be stretched taller than
+/// their text anyway. The gap between columns equals the gap between cards.
+Widget _twoUp(List<Widget> cards, {double minWidth = 720}) => LayoutBuilder(builder: (context, c) {
+      if (cards.length < 2 || c.maxWidth < minWidth) {
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: cards);
+      }
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              for (var i = 0; i < cards.length; i += 2) cards[i],
+            ]),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              for (var i = 1; i < cards.length; i += 2) cards[i],
+            ]),
+          ),
+        ],
+      );
+    });
+
 /// "37%" plus the sample in brackets; greyed out when below the minimum.
 Widget _rate(double? v, int n, int min) {
   if (v == null || n == 0) return _cell('—', muted: true);
@@ -238,7 +267,9 @@ class KeyTakeawaysCard extends StatelessWidget {
         if (ts.isEmpty)
           const Text('Not enough data yet to generate takeaways for this opponent.', style: _muted)
         else ...[
-          for (var i = 0; i < ts.length; i++) _takeaway(i + 1, ts[i]),
+          // Two columns on wide screens (numbered 1, 2 across, then down),
+          // one stacked column on narrow ones. Nothing is dropped or reordered.
+          _twoUp([for (var i = 0; i < ts.length; i++) _takeaway(i + 1, ts[i])]),
           if (ts.length < 3)
             const Padding(
               padding: EdgeInsets.only(top: 8),

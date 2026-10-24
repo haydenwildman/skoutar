@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../services/app_session.dart';
 import '../services/stats_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/responsive.dart';
 import '../widgets/glow.dart';
 import '../widgets/stat_vbox.dart';
 import '../widgets/year_filter_dropdown.dart';
@@ -73,6 +74,9 @@ class _OverviewScreenState extends State<OverviewScreen> {
           'appearances. Getting ahead in the count early. Higher is better.',
     };
 
+    // `prominent` makes the number the focal point of each bar (larger value,
+    // slightly larger benchmark text) while the label stays the supporting
+    // text. Only the Overview opts in; other screens keep the standard look.
     Widget bar(String label, String value, Color bg, [String? statKey, double? rawValue]) => PerfStatBar(
           label: label,
           value: value,
@@ -81,7 +85,55 @@ class _OverviewScreenState extends State<OverviewScreen> {
           scaleHint: statKey != null ? statScaleHint(statKey) : null,
           statKey: statKey,
           rawValue: rawValue,
+          prominent: true,
         );
+
+    final keyStatsCard = GlowCard(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Key Stats', style: TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                bar('IP', stats.ipDisplay, AppColors.tint),
+                bar('ERA', stats.era?.toStringAsFixed(2) ?? 'N/A', perfHex('ERA', stats.era), 'ERA', stats.era),
+                bar('WHIP', stats.whip?.toStringAsFixed(3) ?? 'N/A', perfHex('WHIP', stats.whip), 'WHIP', stats.whip),
+                bar('AVG Against', stats.avg?.toStringAsFixed(3) ?? 'N/A', perfHex('AVG', stats.avg), 'AVG', stats.avg),
+                bar('SLG Against', stats.slg?.toStringAsFixed(3) ?? 'N/A', perfHex('SLG', stats.slg), 'SLG', stats.slg),
+                bar('P/PA', stats.ppa?.toStringAsFixed(2) ?? 'N/A', perfHex('PPA', stats.ppa), 'PPA', stats.ppa),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+
+    final rateStatsCard = GlowCard(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Rate Stats', style: TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                bar('K%', stats.kPct != null ? '${stats.kPct}%' : 'N/A', perfHex('K_pct', stats.kPct), 'K_pct', stats.kPct),
+                bar('BB%', stats.bbPct != null ? '${stats.bbPct}%' : 'N/A', perfHex('BB_pct', stats.bbPct), 'BB_pct', stats.bbPct),
+                bar('K-BB%', stats.kbb != null ? '${stats.kbb}%' : 'N/A', perfHex('kbb_pct', stats.kbb), 'kbb_pct', stats.kbb),
+                bar('Whiff%', stats.whiffPct != null ? '${stats.whiffPct}%' : 'N/A', perfHex('whiff_pct', stats.whiffPct), 'whiff_pct', stats.whiffPct),
+                bar('F-Strike%', stats.fStrikePct != null ? '${stats.fStrikePct}%' : 'N/A', perfHex('f_strike', stats.fStrikePct), 'f_strike', stats.fStrikePct),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -134,50 +186,17 @@ class _OverviewScreenState extends State<OverviewScreen> {
             ),
           ),
         ),
-        GlowCard(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Key Stats', style: TextStyle(fontWeight: FontWeight.w800)),
-                const SizedBox(height: 4),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    bar('IP', stats.ipDisplay, AppColors.tint),
-                    bar('ERA', stats.era?.toStringAsFixed(2) ?? 'N/A', perfHex('ERA', stats.era), 'ERA', stats.era),
-                    bar('WHIP', stats.whip?.toStringAsFixed(3) ?? 'N/A', perfHex('WHIP', stats.whip), 'WHIP', stats.whip),
-                    bar('AVG Against', stats.avg?.toStringAsFixed(3) ?? 'N/A', perfHex('AVG', stats.avg), 'AVG', stats.avg),
-                    bar('SLG Against', stats.slg?.toStringAsFixed(3) ?? 'N/A', perfHex('SLG', stats.slg), 'SLG', stats.slg),
-                    bar('P/PA', stats.ppa?.toStringAsFixed(2) ?? 'N/A', perfHex('PPA', stats.ppa), 'PPA', stats.ppa),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-        GlowCard(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Rate Stats', style: TextStyle(fontWeight: FontWeight.w800)),
-                const SizedBox(height: 4),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    bar('K%', stats.kPct != null ? '${stats.kPct}%' : 'N/A', perfHex('K_pct', stats.kPct), 'K_pct', stats.kPct),
-                    bar('BB%', stats.bbPct != null ? '${stats.bbPct}%' : 'N/A', perfHex('BB_pct', stats.bbPct), 'BB_pct', stats.bbPct),
-                    bar('K-BB%', stats.kbb != null ? '${stats.kbb}%' : 'N/A', perfHex('kbb_pct', stats.kbb), 'kbb_pct', stats.kbb),
-                    bar('Whiff%', stats.whiffPct != null ? '${stats.whiffPct}%' : 'N/A', perfHex('whiff_pct', stats.whiffPct), 'whiff_pct', stats.whiffPct),
-                    bar('F-Strike%', stats.fStrikePct != null ? '${stats.fStrikePct}%' : 'N/A', perfHex('f_strike', stats.fStrikePct), 'f_strike', stats.fStrikePct),
-                  ],
-                ),
-              ],
-            ),
-          ),
+        // Side by side when there is room (each card then fits its own bars
+        // instead of one bar stretching across the whole window); stacked on
+        // narrow screens. Start alignment: the cards size to their content.
+        ResponsiveRow(
+          breakpoint: 720,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: keyStatsCard),
+            const SizedBox(width: 8),
+            Expanded(child: rateStatsCard),
+          ],
         ),
       ],
     );
