@@ -2420,7 +2420,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
 
     return GlowCard(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -2440,7 +2440,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
             ),
             const SizedBox(height: 6),
             const Divider(height: 1, thickness: 1, color: AppColors.colBorder),
-            const SizedBox(height: 8),
+            const SizedBox(height: 5),
             // Compact one-row batter header: "#27 John Smith | Right-Handed | Batting 4th"
             Text.rich(
               TextSpan(
@@ -2475,23 +2475,23 @@ class _GameInputScreenState extends State<GameInputScreen> {
               overflow: TextOverflow.ellipsis,
             ),
             if (!history.hasData) ...[
-              const SizedBox(height: 10),
+              const SizedBox(height: 6),
               const Text(
                 'First plate appearance of this game — not faced yet. '
                 'Their history shows up here the next time they come to the plate.',
                 style: TextStyle(fontSize: 12, color: AppColors.colMuted),
               ),
             ] else ...[
-              const SizedBox(height: 10),
+              const SizedBox(height: 6),
               const Divider(height: 1, thickness: 1, color: AppColors.colBorder),
-              const SizedBox(height: 8),
+              const SizedBox(height: 5),
               const Text('OVERALL STATS',
                   style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: AppColors.colMuted, letterSpacing: 1)),
               const SizedBox(height: 6),
               _batterStatsGrid(history.offense),
-              const SizedBox(height: 10),
+              const SizedBox(height: 6),
               const Divider(height: 1, thickness: 1, color: AppColors.colBorder),
-              const SizedBox(height: 8),
+              const SizedBox(height: 5),
               // Last At-Bat + Previous Sequences side by side — condenses
               // the vertical space these two related blocks used to take
               // stacked on top of one another.
@@ -2514,7 +2514,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       lastAtBat,
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 5),
                       _previousSequencesTile(history),
                     ],
                   );
@@ -2528,9 +2528,9 @@ class _GameInputScreenState extends State<GameInputScreen> {
                   ],
                 );
               }),
-              const SizedBox(height: 10),
+              const SizedBox(height: 6),
               const Divider(height: 1, thickness: 1, color: AppColors.colBorder),
-              const SizedBox(height: 8),
+              const SizedBox(height: 5),
               // Batter Tendencies + Spray Chart side by side when there's
               // spray data; tendencies alone (full width) otherwise.
               if (history.sprayPoints.isNotEmpty)
@@ -2554,7 +2554,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
                       const SizedBox(height: 6),
                       Center(
                         child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 190, maxHeight: 190),
+                          constraints: const BoxConstraints(maxWidth: 240, maxHeight: 240),
                           child: AspectRatio(
                             aspectRatio: 1,
                             child: SprayFieldSurface(sprayPoints: history.sprayPoints),
@@ -2568,14 +2568,14 @@ class _GameInputScreenState extends State<GameInputScreen> {
                   if (c.maxWidth < 560) {
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [tendencies, const SizedBox(height: 12), spray],
+                      children: [tendencies, const SizedBox(height: 8), spray],
                     );
                   }
                   return Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(flex: 3, child: tendencies),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 10),
                       Expanded(flex: 2, child: spray),
                     ],
                   );
@@ -2705,7 +2705,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
   Widget _miniStatCellBox(
       String label, String display, double? rawValue, String? statKey, bool hasValue, bool scaled) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(7),
@@ -2718,19 +2718,20 @@ class _GameInputScreenState extends State<GameInputScreen> {
           Text(label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, letterSpacing: 0.3, color: AppColors.colMuted)),
-          const SizedBox(height: 1),
+              style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 0.3, color: AppColors.colMuted)),
+          const SizedBox(height: 0),
           FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
             child: Text(display,
                 maxLines: 1,
                 style: TextStyle(
-                    fontSize: statValueFontSize(context, compact: true),
+                    fontSize: statValueFontSize(context, compact: true) + 4,
                     fontWeight: FontWeight.w900,
+                    height: 1.1,
                     color: hasValue ? AppColors.colText : AppColors.colMuted)),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 3),
           if (scaled)
             TierScaleBar(statKey: statKey!, rawValue: rawValue, valueText: display, compact: true)
           else
@@ -2833,7 +2834,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
               const SizedBox(width: 8),
               Flexible(
                 child: Text(
-                  'G${ab.gameNumber} · ${ab.season} · ${DateFormat('MMM d').format(ab.date)}',
+                  'Game ${ab.gameNumber}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: AppColors.colMuted),
@@ -2879,63 +2880,106 @@ class _GameInputScreenState extends State<GameInputScreen> {
     // "N/A" when there isn't a denominator yet.
     String pct(double? v) => v == null ? 'N/A' : '${v.round()}%';
 
-    Widget pitchStat(String label, String value) => RichText(
-          text: TextSpan(
-            children: [
-              TextSpan(text: '$label ', style: const TextStyle(fontSize: 10.5, color: AppColors.colMuted, fontStyle: FontStyle.italic)),
-              TextSpan(
-                  text: value,
-                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900, color: AppColors.ink)),
-            ],
+    // Totals as small stat chips (value over label) so each number can be
+    // read at a glance instead of scanning a line of tiny italic text.
+    Widget total(String label, String value) => Container(
+          constraints: const BoxConstraints(minWidth: 52),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceAlt,
+            border: Border.all(color: AppColors.colBorder, width: 1.5),
+            borderRadius: BorderRadius.circular(8),
           ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(value, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: AppColors.ink, height: 1.1)),
+            Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.colMuted, height: 1.1)),
+          ]),
+        );
+
+    Widget head(String text, {TextAlign align = TextAlign.center}) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 3),
+          child: Text(text.toUpperCase(),
+              textAlign: align,
+              style: const TextStyle(
+                  fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 0.5, color: AppColors.colMuted)),
+        );
+
+    Widget val(String text) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          child: Text(text,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: AppColors.ink)),
         );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Wrap(spacing: 14, runSpacing: 4, children: [
-          _tendencyStat('AB', '${t.totalAtBats}'),
-          _tendencyStat('Pitches', '${t.totalPitches}'),
-          _tendencyStat('K', '${t.strikeouts}'),
-          _tendencyStat('BB', '${t.walks}'),
-          _tendencyStat('Fouls', '${t.foulBalls}'),
-          _tendencyStat('BIP', '${t.ballsInPlay}'),
+        Wrap(spacing: 6, runSpacing: 6, children: [
+          total('AB', '${t.totalAtBats}'),
+          total('Pitches', '${t.totalPitches}'),
+          total('K', '${t.strikeouts}'),
+          total('BB', '${t.walks}'),
+          total('Fouls', '${t.foulBalls}'),
+          total('BIP', '${t.ballsInPlay}'),
         ]),
-        // One block per pitch type, all three stats computed from this
+        // One aligned row per pitch type; every stat is computed from this
         // batter's pitches only (see BatterHistoryService).
-        for (final ps in t.byPitchType) ...[
+        if (t.byPitchType.isNotEmpty) ...[
           const SizedBox(height: 8),
-          StatHoldInfo(
-            title: _pitchTypeLabel(ps.pitchType),
-            description: composeHoldInfo(
-              what: 'This block shows how this batter has done against one pitch type (usage %, whiff %, BAA and more), using only the pitches thrown to this batter.',
-              colorGuide: pitchTypeColorGuide([ps.pitchType]),
-            ),
-            child: Text(
-            '${_pitchTypeLabel(ps.pitchType)}'
-            '${ps.usagePct != null ? "  ${ps.usagePct!.round()}%" : ""}',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: AppColors.pitchColor(ps.pitchType)),
-            ),
+          Table(
+            columnWidths: const {
+              0: FlexColumnWidth(2.2),
+              1: FlexColumnWidth(1),
+              2: FlexColumnWidth(1),
+              3: FlexColumnWidth(1),
+              4: FlexColumnWidth(1),
+            },
+            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+            border: const TableBorder(horizontalInside: BorderSide(color: AppColors.colBorder, width: 1)),
+            children: [
+              TableRow(children: [
+                head('Pitch', align: TextAlign.left),
+                head('Usage'),
+                head('Whiff'),
+                head('BAA'),
+                head('Strike'),
+              ]),
+              for (final ps in t.byPitchType)
+                TableRow(children: [
+                  StatHoldInfo(
+                    title: _pitchTypeLabel(ps.pitchType),
+                    description: composeHoldInfo(
+                      what: 'This row shows how this batter has done against one pitch type (usage %, whiff %, BAA and strike %), using only the pitches thrown to this batter.',
+                      colorGuide: pitchTypeColorGuide([ps.pitchType]),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      child: Row(children: [
+                        Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(color: AppColors.pitchColor(ps.pitchType), shape: BoxShape.circle)),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(_pitchTypeLabel(ps.pitchType),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: AppColors.ink)),
+                        ),
+                      ]),
+                    ),
+                  ),
+                  val(pct(ps.usagePct)),
+                  val(pct(ps.whiffPct)),
+                  val(_fmtRate(ps.baa)),
+                  val(pct(ps.strikePct)),
+                ]),
+            ],
           ),
-          const SizedBox(height: 2),
-          Wrap(spacing: 14, runSpacing: 2, children: [
-            pitchStat('Whiff', pct(ps.whiffPct)),
-            pitchStat('BAA', _fmtRate(ps.baa)),
-            pitchStat('Strike', pct(ps.strikePct)),
-          ]),
         ],
       ],
     );
   }
-
-  Widget _tendencyStat(String label, String value) => RichText(
-        text: TextSpan(
-          children: [
-            TextSpan(text: '$value ', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppColors.ink)),
-            TextSpan(text: label, style: const TextStyle(fontSize: 10.5, color: AppColors.colMuted, fontStyle: FontStyle.italic)),
-          ],
-        ),
-      );
 
   /// Compact colored-dot legend for the spray chart — one entry per
   /// outcome with its count, instead of an itemized per-point list.

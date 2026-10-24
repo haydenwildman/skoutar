@@ -13,21 +13,21 @@ String _avg(double v) {
 
 String _pct1(double v) => '${v.toStringAsFixed(1)}%';
 
-/// Count Tendencies, one card per count that actually has pitches.
+/// Count Tendencies as a grid of SQUARES: one row per pitch type (plus an ALL
+/// row), one column per count that actually has pitches.
 ///
-/// Inside a card every pitch type thrown at that count is a row with, in this
-/// order: Usage % (with N), Strike %, BAA.
-///  * Usage % = pitches of that type at this count ÷ ALL pitches at this count.
-///    N is the number of those pitches (not at-bats, batters or games). Usage
-///    is not graded: it carries no good/bad color.
-///  * Strike % = strikes ÷ N for that pitch type at this count (SKOUTAR's
-///    strike rule: called, swinging, foul or in play), graded on the same
-///    cutoffs as First-Pitch Strike %.
-///  * BAA = hits ÷ official at-bats that ENDED on that pitch at that count;
-///    a dash when none did (never .000).
-/// Pitch types never thrown at a count, and counts with no pitches, are not
-/// shown. The layout is cards rather than a 12-column grid so it stays
-/// readable on a phone.
+/// Each square is split into three strips, always in this order:
+///  1. Usage % with N - that pitch type's share of ALL pitches thrown at the
+///     count, and N = how many of those pitches there were (pitches, not
+///     at-bats, batters or games). Usage is not graded.
+///  2. Strike % with strikes/N - SKOUTAR's strike rule (called, swinging, foul
+///     or in play), graded on the First-Pitch Strike % cutoffs.
+///  3. BAA with hits/AB - hits ÷ official at-bats that ENDED on that pitch at
+///     that count; a dash when none did (never .000).
+/// Pitch types never thrown at a count show an empty square, and counts with
+/// no pitches get no column. Graded strips use the app's scale style: bright
+/// border, duller fill. If the grid is wider than the screen it scrolls
+/// sideways inside itself.
 class CountTendenciesView extends StatelessWidget {
   final Map<String, dynamic> heatmap;
   const CountTendenciesView({super.key, required this.heatmap});
@@ -50,241 +50,255 @@ class CountTendenciesView extends StatelessWidget {
     }
 
     return LayoutBuilder(builder: (context, constraints) {
-      const gap = 8.0;
-      final cols = constraints.maxWidth >= 900 ? 2 : 1;
-      final cardWidth = (constraints.maxWidth - gap * (cols - 1)) / cols;
-      return Wrap(
-        spacing: gap,
-        runSpacing: gap,
-        children: [
-          for (final count in shown)
-            SizedBox(
-              width: cardWidth,
-              child: _CountCard(
-                count: count,
-                total: countTotals[count] ?? 0,
-                strikesAtCount: countStrikes[count] ?? 0,
-                baaAtCount: countBaa[count],
-                rows: [
-                  for (final pt in pitchTypes)
-                    if (cells['$count|$pt'] != null) cells['$count|$pt']!,
-                ]..sort((a, b) {
-                    final c = (b['n'] as int).compareTo(a['n'] as int);
-                    return c != 0 ? c : (a['pitchType'] as String).compareTo(b['pitchType'] as String);
-                  }),
+      const labelW = 58.0;
+      // Whole pixels, so the row can never be a fraction of a pixel wider than
+      // the space it is given. Below the minimum the grid scrolls sideways.
+      final fit = ((constraints.maxWidth - labelW) / shown.length).floorToDouble();
+      final cell = fit.clamp(84.0, 108.0).toDouble();
+      final valueFont = (cell * 0.16).clamp(13.0, 17.0).toDouble();
+      final subFont = (cell * 0.115).clamp(9.5, 12.0).toDouble();
+      final tableW = labelW + cell * shown.length;
+
+      Widget strip({
+        required String value,
+        required String? sub,
+        required Color? tier,
+        required String title,
+        required String what,
+        String? guide,
+      }) {
+        final graded = tier != null && value != kUnavailable;
+        return StatHoldInfo(
+          title: title,
+          showOnHover: true,
+          description: composeHoldInfo(what: what, colorGuide: guide),
+          child: Container(
+            margin: const EdgeInsets.all(1),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: graded ? ScaleStyle.fillAny(tier) : (value == kUnavailable ? AppColors.surfaceAlt : Colors.white),
+              border: Border.all(color: graded ? tier : AppColors.colBorder, width: graded ? 1.8 : 1.2),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 3),
+                child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
+                  Text(value,
+                      style: TextStyle(
+                          fontSize: valueFont,
+                          fontWeight: FontWeight.w900,
+                          color: value == kUnavailable ? AppColors.colMuted : AppColors.colText)),
+                  if (sub != null) ...[
+                    const SizedBox(width: 3),
+                    Text(sub, style: TextStyle(fontSize: subFont, fontWeight: FontWeight.w700, color: AppColors.colMuted)),
+                  ],
+                ]),
               ),
             ),
-        ],
-      );
-    });
-  }
-}
+          ),
+        );
+      }
 
-class _CountCard extends StatelessWidget {
-  final String count;
-  final int total;
-  final int strikesAtCount;
-  final Map<String, dynamic>? baaAtCount;
-  final List<Map<String, dynamic>> rows;
+      Widget square({
+        required String count,
+        required String who,
+        required bool isAll,
+        required int n,
+        required int totalAtCount,
+        required double? usage,
+        required int strikes,
+        required double? strikePct,
+        required double? baa,
+        required int ab,
+        required int hits,
+      }) {
+        final where = '$who at $count';
+        return SizedBox(
+          width: cell,
+          height: cell,
+          child: Column(children: [
+            Expanded(
+              child: strip(
+                value: usage == null ? kUnavailable : _pct1(usage),
+                sub: 'N=$n',
+                tier: null,
+                title: 'Usage % · $where',
+                what: isAll
+                    ? 'All $totalAtCount pitches thrown at $count (every pitch type together), so this is 100%. N is the number of pitches.'
+                    : '$n of the $totalAtCount pitches thrown at $count were $who: $n ÷ $totalAtCount × 100. '
+                        'N=$n is the number of recorded pitches, not at-bats, batters or games. '
+                        'Usage is not graded: using a pitch more or less often is not good or bad by itself.',
+              ),
+            ),
+            Expanded(
+              child: strip(
+                value: strikePct == null ? kUnavailable : _pct1(strikePct),
+                sub: n == 0 ? null : '$strikes/$n',
+                tier: strikePct == null ? null : perfHex('f_strike', strikePct),
+                title: 'Strike % · $where',
+                what: 'Of the $n pitch${n == 1 ? '' : 'es'} counted here, $strikes were strikes '
+                    '(called, swinging, foul or put in play): $strikes ÷ $n. Higher is better.',
+                guide: statColorGuide('f_strike', note: 'Strike % uses the same cutoffs as First-Pitch Strike % (F-Strike%).'),
+              ),
+            ),
+            Expanded(
+              child: strip(
+                value: baa == null ? kUnavailable : _avg(baa),
+                sub: ab > 0 ? '$hits/$ab' : null,
+                tier: baa == null ? null : perfHex('AVG', baa),
+                title: 'BAA · $where',
+                what: 'Batting average against: hits ÷ official at-bats that ENDED on ${isAll ? 'a pitch' : 'this pitch'} '
+                    'thrown at $count (each at-bat is credited only to the pitch that ended it; walks and hit-by-pitch are not at-bats). '
+                    '${ab > 0 ? '$hits hit${hits == 1 ? '' : 's'} in $ab at-bat${ab == 1 ? '' : 's'}. Lower is better.' : 'No at-bat has ended on it here yet, so BAA is unavailable (a dash), not .000.'}',
+                guide: statColorGuide('AVG'),
+              ),
+            ),
+          ]),
+        );
+      }
 
-  const _CountCard({
-    required this.count,
-    required this.total,
-    required this.strikesAtCount,
-    required this.baaAtCount,
-    required this.rows,
-  });
+      // The margin goes INSIDE the fixed-size box: a Container with both a
+      // width and a margin is wider than its width, which pushed rows with an
+      // empty square past the edge (the 3-2 overflow).
+      Widget emptySquare() => SizedBox(
+            width: cell,
+            height: cell,
+            child: Container(
+              margin: const EdgeInsets.all(1),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppColors.surfaceAlt,
+                border: Border.all(color: AppColors.colBorder, width: 1.2),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text('—', style: TextStyle(color: AppColors.colMuted, fontSize: valueFont)),
+            ),
+          );
 
-  static const double _labelWidth = 58;
+      Widget label(Widget child) => SizedBox(
+            width: labelW,
+            height: cell,
+            child: Center(child: child),
+          );
 
-  Widget _pitchChip(String pt) => StatHoldInfo(
-        title: pt.toUpperCase(),
-        description: composeHoldInfo(
-          what: 'One row per pitch type thrown at $count: how often it is used here, how often it is a strike, '
-              'and the batting average against when an at-bat ended on it.',
-          colorGuide: pitchTypeColorGuide([pt]),
-        ),
-        child: Container(
-          width: _labelWidth,
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-          decoration: BoxDecoration(color: AppColors.pitchColor(pt), borderRadius: BorderRadius.circular(14)),
-          child: Text(pt.toUpperCase(),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)),
-        ),
-      );
+      Widget pitchChip(String pt) => StatHoldInfo(
+            title: pt.toUpperCase(),
+            description: composeHoldInfo(
+              what: 'One row per pitch type: for each count, how often it is used, how often it is a strike, '
+                  'and the batting average against when an at-bat ended on it.',
+              colorGuide: pitchTypeColorGuide([pt]),
+            ),
+            child: Container(
+              width: 50,
+              padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 6),
+              decoration: BoxDecoration(color: AppColors.pitchColor(pt), borderRadius: BorderRadius.circular(14)),
+              child: Text(pt.toUpperCase(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)),
+            ),
+          );
 
-  Widget _headerLabel(String text, int flex) => Expanded(
-        flex: flex,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 2),
-          child: Text(text,
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              style: const TextStyle(
-                  fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 0.4, color: AppColors.colMuted)),
-        ),
-      );
-
-  Widget _line({
-    required Widget label,
-    required String who,
-    required int n,
-    required int totalAtCount,
-    required double? usage,
-    required int strikes,
-    required double? strikePct,
-    required double? baa,
-    required int ab,
-    required int hits,
-    bool isAll = false,
-  }) {
-    final where = '$who at $count';
-    final usageBox = StatBox(
-      label: '',
-      value: usage == null ? kUnavailable : _pct1(usage),
-      sub: 'N=$n',
-      emphasis: true,
-      valueSize: 17,
-      width: double.infinity,
-      title: 'Usage % · $where',
-      description: isAll
-          ? 'All $totalAtCount pitches thrown at $count (every pitch type together), so this is 100%. '
-              'N is the number of pitches.'
-          : '$n of the $totalAtCount pitches thrown at $count were $who: $n ÷ $totalAtCount × 100. '
-              'N=$n is the number of recorded pitches, not at-bats, batters or games. '
-              'The usage of every pitch type at this count adds up to about 100%. '
-              'Usage is not graded: using a pitch more or less often is not good or bad by itself.',
-      showOnHover: true,
-    );
-    final strikeBox = StatBox(
-      label: '',
-      value: strikePct == null ? kUnavailable : _pct1(strikePct),
-      sub: n == 0 ? null : '$strikes/$n',
-      tier: strikePct == null ? null : perfHex('f_strike', strikePct),
-      width: double.infinity,
-      title: 'Strike % · $where',
-      description: 'Of the $n pitch${n == 1 ? '' : 'es'} counted here, $strikes were strikes '
-          '(called, swinging, foul or put in play): $strikes ÷ $n. Higher is better.',
-      colorGuide: statColorGuide('f_strike', note: 'Strike % uses the same cutoffs as First-Pitch Strike % (F-Strike%).'),
-      showOnHover: true,
-    );
-    final baaBox = StatBox(
-      label: '',
-      value: baa == null ? kUnavailable : _avg(baa),
-      sub: ab > 0 ? '$hits/$ab AB' : 'no AB yet',
-      tier: baa == null ? null : perfHex('AVG', baa),
-      width: double.infinity,
-      title: 'BAA · $where',
-      description: 'Batting average against: hits ÷ official at-bats that ENDED on ${isAll ? 'a pitch' : 'this pitch'} '
-          'thrown at $count (each at-bat is credited only to the pitch that ended it; walks and hit-by-pitch are not at-bats). '
-          '${ab > 0 ? '$hits hit${hits == 1 ? '' : 's'} in $ab at-bat${ab == 1 ? '' : 's'}. Lower is better.' : 'No at-bat has ended on it here yet, so BAA is unavailable (a dash), not .000.'}',
-      colorGuide: statColorGuide('AVG'),
-      showOnHover: true,
-    );
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        SizedBox(width: _labelWidth, child: label),
-        const SizedBox(width: 4),
-        Expanded(flex: 12, child: usageBox),
-        const SizedBox(width: 4),
-        Expanded(flex: 10, child: strikeBox),
-        const SizedBox(width: 4),
-        Expanded(flex: 10, child: baaBox),
-      ]),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final bAb = (baaAtCount?['ab'] as int?) ?? 0;
-    final bHits = (baaAtCount?['hits'] as int?) ?? 0;
-    final bBaa = baaAtCount?['baa'] as double?;
-    final allStrikePct = total > 0 ? (strikesAtCount / total * 100) : null;
-    final smallCount = total < 10;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceAlt,
-        border: Border.all(color: AppColors.colBorder, width: 1.5),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        StatHoldInfo(
+      Widget countHeader(String count) {
+        final total = countTotals[count] ?? 0;
+        return StatHoldInfo(
           title: 'Count $count',
           description: composeHoldInfo(
             what: 'Balls-strikes before the pitch. $total recorded pitch${total == 1 ? '' : 'es'} were thrown at $count '
-                'in this selection; every usage % below is out of that $total.',
+                'in this selection; every usage % in this column is out of that $total.'
+                '${total < 10 ? '\nSmall sample: fewer than 10 pitches at this count.' : ''}',
           ),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-            Text(count, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text('$total pitch${total == 1 ? '' : 'es'} thrown',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.colMuted)),
-            ),
-            if (smallCount)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                decoration: BoxDecoration(
-                  border: Border.all(color: AppColors.brandOrangeDeep),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Text('small sample',
-                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: AppColors.brandOrangeDeep)),
-              ),
-          ]),
-        ),
-        const SizedBox(height: 6),
+          child: SizedBox(
+            width: cell,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text(count, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+              Text('$total pitch${total == 1 ? '' : 'es'}${total < 10 ? ' · small' : ''}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                      color: total < 10 ? AppColors.brandOrangeDeep : AppColors.colMuted)),
+            ]),
+          ),
+        );
+      }
+
+      final grid = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          const SizedBox(width: _labelWidth + 4),
-          _headerLabel('USAGE % (N)', 12),
-          const SizedBox(width: 4),
-          _headerLabel('STRIKE %', 10),
-          const SizedBox(width: 4),
-          _headerLabel('BAA', 10),
+          const SizedBox(width: labelW),
+          for (final c in shown) countHeader(c),
         ]),
-        const Divider(height: 8, thickness: 1.2, color: AppColors.colBorder),
-        for (final c in rows)
-          _line(
-            label: _pitchChip(c['pitchType'] as String),
-            who: (c['pitchType'] as String).toUpperCase(),
-            n: c['n'] as int,
-            totalAtCount: total,
-            usage: c['usagePct1'] as double?,
-            strikes: (c['strikes'] as int?) ?? 0,
-            strikePct: c['strikePct1'] as double?,
-            baa: c['baa'] as double?,
-            ab: (c['ab'] as int?) ?? 0,
-            hits: (c['hits'] as int?) ?? 0,
-          ),
-        const Divider(height: 8, thickness: 1.2, color: AppColors.colBorder),
-        _line(
-          isAll: true,
-          label: Container(
-            width: _labelWidth,
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+        const SizedBox(height: 2),
+        for (final pt in pitchTypes)
+          Row(children: [
+            label(pitchChip(pt)),
+            for (final c in shown)
+              if (cells['$c|$pt'] == null)
+                emptySquare()
+              else
+                square(
+                  count: c,
+                  who: pt.toUpperCase(),
+                  isAll: false,
+                  n: cells['$c|$pt']!['n'] as int,
+                  totalAtCount: countTotals[c] ?? 0,
+                  usage: cells['$c|$pt']!['usagePct1'] as double?,
+                  strikes: (cells['$c|$pt']!['strikes'] as int?) ?? 0,
+                  strikePct: cells['$c|$pt']!['strikePct1'] as double?,
+                  baa: cells['$c|$pt']!['baa'] as double?,
+                  ab: (cells['$c|$pt']!['ab'] as int?) ?? 0,
+                  hits: (cells['$c|$pt']!['hits'] as int?) ?? 0,
+                ),
+          ]),
+        Row(children: [
+          label(Container(
+            width: 50,
+            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 6),
             decoration: BoxDecoration(color: AppColors.ink, borderRadius: BorderRadius.circular(14)),
             child: const Text('ALL',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)),
-          ),
-          who: 'All pitches',
-          n: total,
-          totalAtCount: total,
-          usage: total > 0 ? 100.0 : null,
-          strikes: strikesAtCount,
-          strikePct: allStrikePct,
-          baa: bBaa,
-          ab: bAb,
-          hits: bHits,
-        ),
-      ]),
-    );
+          )),
+          for (final c in shown)
+            square(
+              count: c,
+              who: 'All pitches',
+              isAll: true,
+              n: countTotals[c] ?? 0,
+              totalAtCount: countTotals[c] ?? 0,
+              usage: (countTotals[c] ?? 0) > 0 ? 100.0 : null,
+              strikes: countStrikes[c] ?? 0,
+              strikePct: (countTotals[c] ?? 0) > 0 ? ((countStrikes[c] ?? 0) / countTotals[c]! * 100) : null,
+              baa: countBaa[c]?['baa'] as double?,
+              ab: (countBaa[c]?['ab'] as int?) ?? 0,
+              hits: (countBaa[c]?['hits'] as int?) ?? 0,
+            ),
+        ]),
+      ]);
+
+      // Key to the three strips inside every square, top to bottom.
+      final key = Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Wrap(spacing: 14, runSpacing: 2, children: const [
+          Text('Each square, top to bottom:', style: TextStyle(fontSize: 11.5, color: AppColors.colMuted)),
+          Text('USAGE % (N)', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900, color: AppColors.colMuted)),
+          Text('STRIKE %', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900, color: AppColors.colMuted)),
+          Text('BAA', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900, color: AppColors.colMuted)),
+        ]),
+      );
+
+      final sized = SizedBox(width: tableW, child: grid);
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        key,
+        if (tableW <= constraints.maxWidth)
+          sized
+        else
+          SingleChildScrollView(scrollDirection: Axis.horizontal, child: sized),
+      ]);
+    });
   }
 }

@@ -12,6 +12,8 @@ import 'stat_hold_info.dart';
 /// They are placed inside the existing Scouting Report screen — there is no
 /// new tab — and reuse its cards, fonts, colors and press-and-hold info.
 
+Color _chipText(Color bg) => ScaleStyle.isTier(bg) ? ScaleStyle.textOn(bg) : _textOn(bg);
+
 Color _textOn(Color bg) => (bg == AppColors.perfExcellent ||
         bg == AppColors.perfPoor ||
         bg == AppColors.perfBelowAvg)
@@ -179,11 +181,11 @@ class _StatChip extends StatelessWidget {
       child: Container(
         constraints: const BoxConstraints(minWidth: 50),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(8)),
+        decoration: ScaleStyle.box(bg, radius: 8),
         child: Column(children: [
           Text(label,
-              style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: _textOn(bg).withOpacity(0.75))),
-          Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: _textOn(bg))),
+              style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: _chipText(bg).withOpacity(0.75))),
+          Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: _chipText(bg))),
         ]),
       ),
     );

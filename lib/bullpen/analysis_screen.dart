@@ -50,15 +50,15 @@ class _PitchingAnalysisScreenState extends State<PitchingAnalysisScreen> {
 
   Widget _card(String title, Widget child, {String? subtitle}) => GlowCard(
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(10),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 17)),
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
             if (subtitle != null)
               Padding(
                 padding: const EdgeInsets.only(top: 2),
                 child: Text(subtitle, style: const TextStyle(fontSize: 12, color: AppColors.colMuted)),
               ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 6),
             child,
           ]),
         ),
@@ -103,13 +103,20 @@ class _PitchingAnalysisScreenState extends State<PitchingAnalysisScreen> {
       else ...[
         if (ranged.hasData) ...[
           _overview(shown),
-          _byPitch(shown, app),
-          _misses(shown, app, store),
+          // Side by side on wide screens; stacked on narrow ones.
+          ResponsiveRow(breakpoint: 900, crossAxisAlignment: CrossAxisAlignment.start, stackedGap: 0, children: [
+            Expanded(child: _byPitch(shown, app)),
+            const SizedBox(width: 8),
+            Expanded(child: _misses(shown, app, store)),
+          ]),
           _progress(shown, app),
         ] else
           _card('Bullpen analysis', const Text('No finished bullpens in this filter yet.', style: TextStyle(color: AppColors.colMuted))),
-        _compare(comparison, app),
-        _workOnNext(recs, app),
+        ResponsiveRow(breakpoint: 900, crossAxisAlignment: CrossAxisAlignment.start, stackedGap: 0, children: [
+          Expanded(child: _compare(comparison, app)),
+          const SizedBox(width: 8),
+          Expanded(child: _workOnNext(recs, app)),
+        ]),
         _planCard(ranged, app, store, lastPlanResults),
         _gameModeResults(store, app),
       ],
@@ -157,7 +164,7 @@ class _PitchingAnalysisScreenState extends State<PitchingAnalysisScreen> {
 
     return GlowCard(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             const Text('Filter', style: TextStyle(fontWeight: FontWeight.w800)),

@@ -10,7 +10,6 @@ import '../widgets/stat_hold_info.dart';
 
 // ── formatting ─────────────────────────────────────────────────────────────
 String _pct(double? v) => v == null ? kUnavailable : '${v.toStringAsFixed(0)}%';
-String _frac(double? v) => v == null ? kUnavailable : '${(v * 100).toStringAsFixed(0)}%';
 String _avg(double? v) {
   if (v == null) return kUnavailable;
   final s = v.toStringAsFixed(3);
@@ -31,10 +30,6 @@ const String _whatBaa =
 const String _whatBb = 'Walk percentage: share of finished at-bats that ended in a walk. Lower is better.';
 const String _whatK =
     'Strikeout percentage: share of finished at-bats that ended in a strikeout (including a dropped third strike). Higher is better.';
-const String _whatOut =
-    'Out percentage: share of finished at-bats that ended with the batter retired (strikeout, out in play, fielder\'s choice). '
-    'A dropped third strike is a strikeout but not counted as an out. Higher is better.';
-
 /// A graded box. [raw] null = no eligible data: dash and neutral styling.
 StatBox _graded({
   required String label,
@@ -105,15 +100,15 @@ StatBox _baaBox(PaResults pa, String ctx) => _graded(
 
 /// Pitch-type usage as neutral boxes (share of the group, with the raw count).
 /// The most-used pitch gets the brand outline; nothing is colored good or bad.
-Widget _mixBoxes(Map<String, int> counts, String ctx) {
+List<Widget> _mixBoxList(Map<String, int> counts, String ctx) {
   final total = counts.values.fold<int>(0, (a, b) => a + b);
-  if (total == 0) return const SizedBox.shrink();
+  if (total == 0) return const <Widget>[];
   final entries = counts.entries.toList()
     ..sort((a, b) {
       final c = b.value.compareTo(a.value);
       return c != 0 ? c : a.key.compareTo(b.key);
     });
-  return Wrap(spacing: 6, runSpacing: 6, children: [
+  return [
     for (var i = 0; i < entries.length; i++)
       StatBox(
         label: entries[i].key.toUpperCase(),
@@ -128,17 +123,13 @@ Widget _mixBoxes(Map<String, int> counts, String ctx) {
             'by itself. The outlined box is the most used.',
         showOnHover: true,
       ),
-  ]);
+  ];
 }
 
-Widget _boxes(List<Widget> children) => Wrap(spacing: 6, runSpacing: 6, children: children);
+Widget _mixBoxes(Map<String, int> counts, String ctx) =>
+    Wrap(spacing: 6, runSpacing: 6, children: _mixBoxList(counts, ctx));
 
-Widget _caption(String text) => Padding(
-      padding: const EdgeInsets.only(top: 2),
-      child: Text(text.toUpperCase(),
-          style: const TextStyle(
-              fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 0.6, color: AppColors.brandOrangeDeep)),
-    );
+Widget _boxes(List<Widget> children) => Wrap(spacing: 6, runSpacing: 6, children: children);
 
 /// One labelled value (used by the plain "Data used" card).
 class _M extends StatelessWidget {
@@ -248,7 +239,7 @@ class _Section extends StatelessWidget {
   Widget build(BuildContext context) {
     return GlowCard(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(10),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           StatHoldInfo(
             title: title,
@@ -283,6 +274,34 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
   bool _showAll = false;
   bool _showAllTransitions = false;
 
+  /// Sequence rows in two columns (rank order runs left to right, then down)
+  /// with a subtle vertical divider between them. Narrow widths stack them in
+  /// one column.
+  Widget _twoColumnRows(List<Widget> rows) => LayoutBuilder(builder: (context, c) {
+        if (rows.length < 2 || c.maxWidth < 900) {
+          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: rows);
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                for (var i = 0; i < rows.length; i += 2) rows[i],
+              ]),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Container(width: 1.2, color: AppColors.colBorder),
+            ),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                for (var i = 1; i < rows.length; i += 2) rows[i],
+              ]),
+            ),
+          ],
+        );
+      });
+
   Widget _sequenceRow(SequenceRow r) {
     final t = r.label;
     return _Row(
@@ -316,21 +335,6 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
               statKey: 'K_pct',
               title: 'Strikeout % · $t',
               what: _whatK),
-          _graded(
-              label: 'Out%',
-              raw: r.pa.outPct,
-              text: _pct(r.pa.outPct),
-              statKey: 'out_pct',
-              title: 'Out % · $t',
-              what: _whatOut),
-          _graded(
-              label: 'Out% floor',
-              raw: r.outLower == null ? null : r.outLower! * 100,
-              text: _frac(r.outLower),
-              statKey: 'out_pct',
-              title: 'Out % floor · $t',
-              what: 'The low end of the 95% confidence range for Out%, given how few at-bats there are. '
-                  'A sequence seen only a few times cannot earn a high floor. The list is ranked by it. Higher is better.'),
         ]),
       ],
     );
@@ -383,7 +387,8 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
         what: 'The first pitches of FINISHED at-bats, grouped by exact pitch-type order. Pick a length (3 pitches and up); '
             'only lengths that a recorded at-bat actually reached are offered, and only sequences that really happened are listed. '
             'Each at-bat counts once per sequence and the result is how that at-bat ended.\n'
-            'Ranked by the Out% floor (95% Wilson), so a sequence seen 3 times ranks below one with the same Out% seen 30 times. '
+            'The list is ranked by a conservative estimate of how often the at-bat ended in an out (a 95% Wilson floor), '
+            'so a sequence seen 3 times ranks below one with the same results seen 30 times. '
             'It is a ranking aid, not a prediction or proof the sequence caused the result.',
         blurb: 'Opening pitches of finished at-bats, by sequence length. Boxes tint green (favorable) to red (unfavorable); '
             'plain boxes are counts and are not graded. Hover or press and hold a box for what it means.',
@@ -410,7 +415,7 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
                 ),
             ]),
             const SizedBox(height: 8),
-            for (final r in visibleRows) _sequenceRow(r),
+            _twoColumnRows([for (final r in visibleRows) _sequenceRow(r)]),
             if (openRows.length > 12)
               Align(
                 alignment: Alignment.centerLeft,
@@ -442,14 +447,18 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
                 small: r.next.small,
                 smallText: 'n < ${SeqSampleSize.smallPitches}',
                 children: [
+                  // One row of boxes: the results of the next pitch, then (after
+                  // a thin divider) which pitch came next. No separate lower block.
                   _boxes([
                     ..._pitchBoxes(r.next, 'after ${r.prevType.toUpperCase()}',
                         nWhat: 'Next pitches thrown right after a ${r.prevType.toUpperCase()}.'),
                     _count('In play', '${r.next.inPlay}', 'In play · after ${r.prevType.toUpperCase()}',
                         'Next pitches that were put in play. A count, not graded.'),
+                    if (r.nextTypes.isNotEmpty) ...[
+                      Container(width: 1.2, height: 44, color: AppColors.colBorder),
+                      ..._mixBoxList(r.nextTypes, 'next pitch after ${r.prevType.toUpperCase()}'),
+                    ],
                   ]),
-                  _caption('Next pitch'),
-                  _mixBoxes(r.nextTypes, 'next pitch after ${r.prevType.toUpperCase()}'),
                 ],
               ),
         ],

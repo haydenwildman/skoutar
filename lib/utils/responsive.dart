@@ -29,7 +29,7 @@ class Responsive {
   static bool useDrawer(BuildContext context) => width(context) < Breakpoints.drawer;
 
   /// Outer padding around every screen's content.
-  static double pagePadding(BuildContext context) => isPhone(context) ? 12 : 16;
+  static double pagePadding(BuildContext context) => isPhone(context) ? 8 : 12;
 
   /// Width for a dialog's content: [desired] on large screens, but never
   /// wider than what actually fits on a small one (allowing for the

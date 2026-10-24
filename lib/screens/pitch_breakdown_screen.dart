@@ -320,7 +320,6 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
 
           // Very light wash toward white: same hue and same cutoffs, just less
           // saturated so the numbers - not the color blocks - lead.
-          Color soften(Color c) => c == AppColors.tint ? c : Color.lerp(c, Colors.white, 0.14)!;
 
           const countNoun = <String, String>{
             'n': 'pitches',
@@ -435,7 +434,7 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
             final bg = m.colorFn != null
                 ? m.colorFn!(row)
                 : (m.tier != null ? perfHex(m.tier!, value) : AppColors.tint);
-            final tc = textColorForCell(bg);
+            final tc = ScaleStyle.isTier(bg) ? ScaleStyle.textOn(bg) : textColorForCell(bg);
             final valueText = value == null
                 ? 'N/A'
                 : (m.isAvg ? value.toStringAsFixed(3) : '${value}%');
@@ -445,7 +444,7 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
               title: '${m.label} · $rowName',
               description: composeHoldInfo(what: what, colorGuide: guides[m.label]),
               child: Container(
-                color: soften(bg),
+                decoration: ScaleStyle.box(bg),
                 padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 2),
                 alignment: Alignment.center,
                 child: Column(mainAxisSize: MainAxisSize.min, children: [

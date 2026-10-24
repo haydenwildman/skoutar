@@ -64,16 +64,14 @@ class StatVBox extends StatelessWidget {
     final labelSize = compact ? 8.5 : 10.0;
     final valueSize = compact ? 14.0 : 18.0;
     final gap = compact ? 1.0 : 3.0;
+    final textColor = ScaleStyle.isTier(background) ? ScaleStyle.textOn(background) : this.textColor;
 
     return StatHoldInfo(
       title: label,
       description: _holdText,
       child: Container(
         padding: EdgeInsets.symmetric(vertical: vPad, horizontal: hPad),
-        decoration: BoxDecoration(
-          color: background,
-          borderRadius: BorderRadius.circular(compact ? 7 : 10),
-        ),
+        decoration: ScaleStyle.box(background, radius: compact ? 7 : 10),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [

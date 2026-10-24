@@ -293,7 +293,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                         ),
                       ),
                       SingleChildScrollView(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(12),
                         child: _buildBody(_selected),
                       ),
                     ],

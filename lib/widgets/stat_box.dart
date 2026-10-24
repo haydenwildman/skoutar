@@ -17,11 +17,11 @@ import 'stat_hold_info.dart';
 /// neutral tint that some helpers return for "ungraded").
 bool isGradedTier(Color? c) => c != null && c != noDataGray && c != AppColors.tint;
 
-/// Very light fill derived from a tier color.
-Color subtleFill(Color tier) => Color.lerp(tier, Colors.white, 0.80)!;
+/// Duller interior of the tier's own color (the border is the bright color).
+Color subtleFill(Color tier) => ScaleStyle.fillAny(tier);
 
-/// Slightly stronger border derived from a tier color.
-Color subtleBorder(Color tier) => Color.lerp(tier, Colors.white, 0.35)!;
+/// Bright border: the tier color itself.
+Color subtleBorder(Color tier) => tier;
 
 /// Value shown when a statistic has no eligible data. Never a zero.
 const String kUnavailable = '—';
@@ -91,7 +91,7 @@ class StatBox extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color: highlighted ? AppColors.brandOrangeDeep : border,
-          width: highlighted ? 2 : 1.2,
+          width: highlighted ? 2 : (graded ? 2 : 1.2),
         ),
       ),
       child: Column(
@@ -204,7 +204,7 @@ class BoxScoreTable extends StatelessWidget {
           decoration: BoxDecoration(
             color: graded ? subtleFill(c.tier!) : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
-            border: graded ? Border.all(color: subtleBorder(c.tier!), width: 1) : null,
+            border: graded ? Border.all(color: subtleBorder(c.tier!), width: 2) : null,
           ),
           child: FittedBox(
             fit: BoxFit.scaleDown,

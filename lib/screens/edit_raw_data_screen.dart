@@ -23,6 +23,11 @@ class EditRawDataScreen extends StatefulWidget {
 
 class _EditRawDataScreenState extends State<EditRawDataScreen> {
   static const _uuid = Uuid();
+
+  /// Rows shown per page. Page 0 is the 25 most recent pitches; higher pages
+  /// step back toward the oldest ones.
+  static const int _pageSize = 25;
+  int _page = 0;
   static const handOptions = ['L', 'R', 'S'];
   static const eventTypeOptions = ['pitch', 'po', 'to', 'txo', 'bk'];
   static const callOptions = ['b', 'ss', 'sl', 'f', 'ip', 'hbp', 'dk'];
@@ -427,7 +432,8 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
   /// Wide screens: a header + one compact line per row, columns sized by flex
   /// so everything (all fields and the row buttons) fits without sideways
   /// scrolling. Narrow screens: each row becomes a card of labeled values.
-  Widget _table(BuildContext context, List<PitchEvent> data, List<_Field> fields, double width) {
+  Widget _table(BuildContext context, List<PitchEvent> data, List<_Field> fields, double width,
+      {required int start, required int end}) {
     const actionsW = 104.0;
     final wide = width >= 900;
 
@@ -459,8 +465,9 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
           ListView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: data.length,
-            itemBuilder: (context, i) {
+            itemCount: end - start,
+            itemBuilder: (context, k) {
+              final i = start + k;
               final e = data[i];
               return Container(
                 key: ValueKey('row-${e.id}'),
@@ -491,8 +498,9 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
     return ListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: data.length,
-      itemBuilder: (context, i) {
+      itemCount: end - start,
+      itemBuilder: (context, k) {
+        final i = start + k;
         final e = data[i];
         return Container(
           key: ValueKey('card-${e.id}'),
@@ -532,10 +540,55 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
     );
   }
 
+  /// "Newer / Older" page controls. Page 0 holds the most recent pitches.
+  Widget _pager(int total, int pages) {
+    final lastRow = total - _page * _pageSize; // 1-based, newest on page 0
+    final firstRow = (lastRow - _pageSize + 1).clamp(1, total);
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        IconButton(
+          tooltip: 'Newest rows',
+          visualDensity: VisualDensity.compact,
+          onPressed: _page > 0 ? () => setState(() => _page = 0) : null,
+          icon: const Icon(Icons.first_page, size: 20),
+        ),
+        OutlinedButton.icon(
+          onPressed: _page > 0 ? () => setState(() => _page -= 1) : null,
+          icon: const Icon(Icons.chevron_left, size: 18),
+          label: const Text('Newer'),
+        ),
+        Text('Rows $firstRow\u2013$lastRow of $total  (page ${_page + 1} of $pages)',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+        OutlinedButton(
+          onPressed: _page < pages - 1 ? () => setState(() => _page += 1) : null,
+          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+            Text('Older'),
+            Icon(Icons.chevron_right, size: 18),
+          ]),
+        ),
+        IconButton(
+          tooltip: 'Oldest rows',
+          visualDensity: VisualDensity.compact,
+          onPressed: _page < pages - 1 ? () => setState(() => _page = pages - 1) : null,
+          icon: const Icon(Icons.last_page, size: 20),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = context.watch<AppSession>();
     final data = session.pitches;
+    final pages = data.isEmpty ? 1 : ((data.length + _pageSize - 1) ~/ _pageSize);
+    // Rows can be deleted while a later page is open, so keep the page valid.
+    if (_page > pages - 1) _page = pages - 1;
+    if (_page < 0) _page = 0;
+    final end = data.length - _page * _pageSize;
+    final start = (end - _pageSize).clamp(0, data.length);
 
     // Same option set the Add/Edit dialog uses (custom pitch types + any
     // pitch type already in the data).
@@ -554,7 +607,8 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
           children: [
             const Text('Direct Pitch Log Editor', style: TextStyle(fontWeight: FontWeight.w800)),
             const SizedBox(height: 4),
-            Text('${data.length} rows logged', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+            Text('${data.length} rows logged \u00b7 showing the ${_pageSize} most recent first; use Older to go back.',
+                style: const TextStyle(color: Colors.grey, fontSize: 12)),
             const SizedBox(height: 10),
             // ── Actions row — Add Row and Delete All live together here,
             // right above the table they act on.
@@ -571,7 +625,7 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
                 OutlinedButton.icon(
                   onPressed: () => _openRowDialog(context, insertIndex: 0),
                   icon: const Icon(Icons.vertical_align_top, size: 16),
-                  label: const Text('Insert at Top'),
+                  label: const Text('Insert at Start (oldest)'),
                 ),
                 OutlinedButton.icon(
                   onPressed: data.isEmpty ? null : () => _confirmDeleteAll(context),
@@ -591,8 +645,13 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
             const SizedBox(height: 8),
             if (data.isEmpty)
               const Text('No data yet.', style: TextStyle(color: Colors.grey))
-            else
-              LayoutBuilder(builder: (context, constraints) => _table(context, data, fields, constraints.maxWidth)),
+            else ...[
+              if (pages > 1) ...[_pager(data.length, pages), const SizedBox(height: 6)],
+              LayoutBuilder(
+                  builder: (context, constraints) =>
+                      _table(context, data, fields, constraints.maxWidth, start: start, end: end)),
+              if (pages > 1) ...[const SizedBox(height: 6), _pager(data.length, pages)],
+            ],
           ],
         ),
       ),

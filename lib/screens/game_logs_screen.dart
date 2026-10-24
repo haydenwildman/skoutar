@@ -326,10 +326,10 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
         filterRow,
         const SizedBox(height: 8),
         chartsSection,
-        const SizedBox(height: 14),
+        const SizedBox(height: 8),
         GlowCard(
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -556,22 +556,9 @@ class _GameLogCard extends StatelessWidget {
           'Line-drive percentage: line drives ÷ balls in play with a known type.'),
     ];
 
-    Widget group(String title, List<BoxScoreCol> cols) => Padding(
-          padding: const EdgeInsets.only(top: 10),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Padding(
-              padding: const EdgeInsets.only(bottom: 3),
-              child: Text(title.toUpperCase(),
-                  style: const TextStyle(
-                      fontSize: 10.5, fontWeight: FontWeight.w900, letterSpacing: 0.6, color: AppColors.brandOrangeDeep)),
-            ),
-            BoxScoreTable(cols: cols),
-          ]),
-        );
-
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 8),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: Colors.white,
@@ -584,7 +571,7 @@ class _GameLogCard extends StatelessWidget {
           // Heading band: clearly separate from the numbers below.
           Container(
             color: AppColors.tint,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             child: Row(children: [
               Expanded(
                 child: Text('vs ${row['opponent']}',
@@ -597,14 +584,43 @@ class _GameLogCard extends StatelessWidget {
             ]),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+            padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              BoxScoreTable(cols: pitchingLine),
-              const SizedBox(height: 8),
-              BoxScoreTable(cols: summary),
-              group('Command and control', command),
-              group('Swing and miss', swingMiss),
-              group('Batted-ball results', battedBall),
+              // Compact horizontal layout: each band keeps its fixed column
+              // width and the bands sit side by side, wrapping onto a second
+              // line only when the card is too narrow. A band wider than the
+              // card (phones) scrolls sideways inside itself.
+              LayoutBuilder(builder: (context, c) {
+                Widget band(String title, List<BoxScoreCol> cols) {
+                  final w = (cols.length * 54.0).clamp(0.0, c.maxWidth).toDouble();
+                  return SizedBox(
+                    width: w,
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: Text(title.toUpperCase(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 0.6, color: AppColors.brandOrangeDeep)),
+                      ),
+                      BoxScoreTable(cols: cols),
+                    ]),
+                  );
+                }
+
+                return Wrap(
+                  spacing: 14,
+                  runSpacing: 4,
+                  children: [
+                    band('Pitching line', pitchingLine),
+                    band('Results', summary),
+                    band('Swing and miss', swingMiss),
+                    band('Command and control', command),
+                    band('Batted-ball results', battedBall),
+                  ],
+                );
+              }),
             ]),
           ),
         ],

@@ -39,6 +39,10 @@ class AppColors {
   static const Color perfBelowAvg = Color(0xFFFB923C);
   static const Color perfPoor = Color(0xFFDC2626);
 
+  /// The five graded tier colors, in one place so every colored cell can be
+  /// recognised and styled the same way (see [ScaleStyle]).
+  static const List<Color> perfTiers = [perfExcellent, perfGood, perfAverage, perfBelowAvg, perfPoor];
+
   // ── THEME / UI colors ────────────────────────────────────────
   // Brand palette (from the orange logo). Orange is an accent; the
   // chrome (sidebar, app bar, headers) is a warm near-black "ink" taken
@@ -190,7 +194,7 @@ ThemeData buildAppTheme() {
         borderRadius: BorderRadius.circular(12),
         side: const BorderSide(color: AppColors.colBorder, width: 1.5),
       ),
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 8),
     ),
     // Gives dialogs a little more room on phones; no visible change on
     // desktop where dialogs are far narrower than the window.
@@ -256,4 +260,49 @@ ThemeData buildAppTheme() {
       waitDuration: const Duration(milliseconds: 400),
     ),
   );
+}
+
+
+/// One look for every color-scale CELL / BOX in the app (stat boxes, table
+/// cells, heat-map blocks): a bright border in the tier's own color and a
+/// duller (less saturated, slightly lighter) interior of the same color.
+///
+/// Progress bars deliberately do NOT use this - they keep their original
+/// solid colors. Non-tier colors (neutral tints, pitch colors, etc.) pass
+/// through unchanged.
+class ScaleStyle {
+  ScaleStyle._();
+
+  static bool isTier(Color c) => AppColors.perfTiers.contains(c);
+
+  /// Bright border color (the tier color itself).
+  static Color border(Color c) => c;
+
+  /// Duller interior of ANY color: same hue, noticeably less saturated, and a
+  /// consistent mid-light value so dark text stays readable on every tier.
+  static Color fillAny(Color c) {
+    final hsl = HSLColor.fromColor(c);
+    return hsl
+        .withSaturation((hsl.saturation * 0.55).clamp(0.0, 1.0))
+        .withLightness(0.80)
+        .toColor();
+  }
+
+  /// Duller interior for tier colors; non-tier colors pass through.
+  static Color fill(Color c) => isTier(c) ? fillAny(c) : c;
+
+  /// Text color that stays readable on the duller interior (always dark).
+  static Color textOn(Color tier) => AppColors.colText;
+
+  /// Box decoration for a scale cell. [radius] 0 = square corners.
+  static BoxDecoration box(Color c, {double radius = 0, double width = 2}) {
+    if (!isTier(c)) {
+      return BoxDecoration(color: c, borderRadius: radius > 0 ? BorderRadius.circular(radius) : null);
+    }
+    return BoxDecoration(
+      color: fill(c),
+      border: Border.all(color: border(c), width: width),
+      borderRadius: radius > 0 ? BorderRadius.circular(radius) : null,
+    );
+  }
 }

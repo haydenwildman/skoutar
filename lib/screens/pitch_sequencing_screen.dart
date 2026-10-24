@@ -67,7 +67,7 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
 
     final filterRow = GlowCard(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -150,14 +150,14 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
         title: 'Sequence ${s['seq']}',
         description: composeHoldInfo(
           what: 'The first three pitch types of a finished plate appearance, in the order thrown.\n'
-              'Out% = share of those plate appearances that ended in an out. K% = share that ended in a strikeout. '
+              'K% = share of those plate appearances that ended in a strikeout. '
               'Strike% = share of the 3 pitches that were strikes. n = plate appearances it is based on (under 3 is a small sample). Weak contact = share of balls in play that were ground balls.\n'
               'Score: ${s['score']}. $_seqScoreWhat',
           colorGuide: _seqCardGuide(),
         ),
         child: Container(
           margin: const EdgeInsets.only(bottom: 6),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             color: good ? const Color(0xFFF0FDF4) : const Color(0xFFFEF2F2),
             border: Border.all(color: good ? AppColors.colSuccess : AppColors.colError, width: 2),
@@ -183,17 +183,14 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
                   ),
                   child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: perfHex('seq_score', s['score'] as double?),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
+                  decoration: ScaleStyle.box(perfHex('seq_score', s['score'] as double?), radius: 10, width: 1.8),
                   child: Text('Score ${s['score']}',
-                      style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)),
+                      style: const TextStyle(color: AppColors.colText, fontSize: 11, fontWeight: FontWeight.w800)),
                   ),
                 ),
               ]),
               const SizedBox(height: 2),
-              Text('Out%: ${s['outPct']}%  |  K%: ${s['kPct']}%  |  Strike%: ${s['strikePct']}%  |  n=${s['count']} PA'
+              Text('K%: ${s['kPct']}%  |  Strike%: ${s['strikePct']}%  |  n=${s['count']} PA'
                   '${s['lowSample'] == true ? ' (small sample)' : ''}'
                   '${s['weakContactPct'] != null ? '  |  Weak contact: ${s['weakContactPct']}%' : ''}',
                   style: const TextStyle(fontSize: 12, color: Colors.black54)),
@@ -224,7 +221,7 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
         if (seqs.isEmpty)
           GlowCard(
             child: Padding(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(10),
               child: Text(
                 'Decision-score lists (Best Sequences / Sequences to Avoid) need finished at-bats with 3+ pitches; '
                 '${analytics.diagnostics.pasWith3Plus} found in this selection. The sections above still use every at-bat that is available.',
@@ -239,7 +236,7 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
             Expanded(
               child: GlowCard(
                 child: Padding(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(10),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -257,7 +254,7 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
             Expanded(
               child: GlowCard(
                 child: Padding(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(10),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -274,9 +271,14 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
             ),
           ],
         ),
-        GlowCard(
+        ResponsiveRow(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child:
+            GlowCard(
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -300,9 +302,13 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
             ),
           ),
         ),
-        GlowCard(
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child:
+            GlowCard(
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -327,28 +333,31 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
             ),
           ),
         ),
+            ),
+          ],
+        ),
         GlowCard(
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 StatHoldInfo(
                   title: 'Count Tendencies',
                   description: composeHoldInfo(
-                    what: 'One card per count (balls-strikes) that has recorded pitches. Each row is a pitch type thrown at that count, '
-                        'showing in this order: USAGE % with N (that pitch type\'s share of ALL pitches thrown at the count, and how many pitches that is), '
-                        'STRIKE % (how often that pitch was a strike) and BAA (batting average against).\n'
-                        'BAA credits an at-bat only to the pitch that ended it, counts official at-bats only (no walks or hit-by-pitches), and shows a dash when no at-bat ended on that pitch at that count.\n'
-                        'The ALL row combines every pitch type at the count. Pitch types never thrown at a count are not listed.',
-                    colorGuide: 'Usage is not graded: using a pitch more or less often is not good or bad by itself, so its box has no performance color.\n'
-                        'Strike % and BAA are tinted green (favorable) to red (unfavorable) with their own cutoffs. Hover or press and hold a box for its numbers and cutoffs.\n'
+                    what: 'A grid of squares: one column per count (balls-strikes) that has recorded pitches, one row per pitch type, plus an ALL row. '
+                        'Each square has three strips, top to bottom: USAGE % with N (that pitch type\'s share of ALL pitches thrown at the count, and how many pitches that is), '
+                        'STRIKE % (how often that pitch was a strike, with strikes/N) and BAA (batting average against, with hits/AB).\n'
+                        'BAA credits an at-bat only to the pitch that ended it, counts official at-bats only (no walks or hit-by-pitches) and is a dash when none ended there. '
+                        'The ALL row combines every pitch type at the count. A dash square means that pitch was never thrown at that count.',
+                    colorGuide: 'Usage is not graded: using a pitch more or less often is not good or bad by itself, so its strip has no performance color. '
+                        'Strike % and BAA use a bright border with a duller fill of the same color, green (favorable) to red (unfavorable), each with its own cutoffs. Hover or press and hold a strip for its exact numbers.\n'
                         '${swatchLine(noDataGray, 'Dash: not enough data for that stat')}',
                   ),
                   child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text('Count Tendencies', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
                     Text(
-                      'For each count: how often each pitch is thrown (Usage % and N), then Strike % and BAA. Strike % and BAA are tinted; usage is not.',
+                      'For each count and pitch: Usage % and N, then Strike % and BAA, in one square. Strike % and BAA are tinted; usage is not.',
                       style: TextStyle(fontSize: 11, color: AppColors.colMuted, fontStyle: FontStyle.italic),
                     ),
                   ]),

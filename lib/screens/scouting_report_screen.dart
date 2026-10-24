@@ -40,6 +40,8 @@ String _fmtAvg(double v) {
   return s.startsWith('0.') ? s.substring(1) : '$s';
 }
 
+Color _scaleText(Color bg) => ScaleStyle.isTier(bg) ? ScaleStyle.textOn(bg) : _textColorFor(bg);
+
 Color _textColorFor(Color bg) => (bg == AppColors.perfExcellent ||
         bg == AppColors.perfPoor ||
         bg == AppColors.perfBelowAvg)
@@ -541,8 +543,11 @@ class _ScoutingReportBodyState extends State<_ScoutingReportBody> {
           ),
         ]),
         // ── Team Tendencies + Pitch Selection Strategy (added) ────
-        TeamTendenciesCard(r.plan),
-        PitchStrategyCard(r),
+        ResponsiveRow(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: TeamTendenciesCard(r.plan)),
+          const SizedBox(width: 8),
+          Expanded(child: PitchStrategyCard(r)),
+        ]),
         // ── Best Hitters ───────────────────────────────────────────
         GlowCard(
           child: Padding(
@@ -557,17 +562,31 @@ class _ScoutingReportBodyState extends State<_ScoutingReportBody> {
                 if (r.keyHitters.isEmpty)
                   const Text('Need more PA data.', style: TextStyle(color: Colors.grey))
                 else
-                  for (final h in r.keyHitters) _hitterCard(h),
+                  LayoutBuilder(builder: (context, c) {
+                    // 1 column on phones, 2 on mid widths, 3 on wide screens.
+                    final cols = c.maxWidth >= 1000 ? 3 : (c.maxWidth >= 600 ? 2 : 1);
+                    const gap = 8.0;
+                    final w = (c.maxWidth - gap * (cols - 1)) / cols;
+                    return Wrap(
+                      spacing: gap,
+                      children: [for (final h in r.keyHitters) SizedBox(width: w, child: _hitterCard(h))],
+                    );
+                  }),
               ],
             ),
           ),
         ),
         // ── Lineup, hitter reports, situations (added) ────────────
         LineupBreakdownCard(r.plan),
-        HitterReportsCard(r.plan),
-        SituationalPlanCard(r.plan),
+        // Per-hitter reports and the situational plan share a row on wide
+        // screens (each stays full width on narrow ones).
+        ResponsiveRow(breakpoint: 900, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: HitterReportsCard(r.plan)),
+          const SizedBox(width: 8),
+          Expanded(child: SituationalPlanCard(r.plan)),
+        ]),
         // ── Spray chart + Adjustment Notes ────────────────────────
-        ResponsiveRow(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        ResponsiveRow(crossAxisAlignment: CrossAxisAlignment.stretch, stackedCrossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Expanded(
             child: GlowCard(
               child: Padding(
@@ -593,12 +612,12 @@ class _ScoutingReportBodyState extends State<_ScoutingReportBody> {
           Expanded(
             child: GlowCard(
               child: Padding(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text('Adjustment Notes', style: TextStyle(fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     if (gameTrend.length < 2) ...[
                       _tinySeqCard('First encounter', 'No prior history to adjust from. Use the general plan above.', true,
                           rule: 'shown when there are fewer than 2 games to compare, so no trend is being graded.'),
@@ -608,7 +627,7 @@ class _ScoutingReportBodyState extends State<_ScoutingReportBody> {
                         '• Test off-speed in 0-1 and 1-1 counts\n'
                         '• Watch swing tendencies and adjust by the 3rd PA\n'
                         '• Check the spray chart mid-game for pull/oppo tendencies',
-                        style: TextStyle(fontSize: 12, height: 1.6),
+                        style: TextStyle(fontSize: 12, height: 1.5),
                       ),
                     ] else ...[
                       Builder(builder: (context) {
@@ -853,11 +872,11 @@ Widget _miniStat(String label, String value, Color bg, {String? statKey, String?
 
 Widget _miniStatBox(String label, String value, Color bg) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(8)),
+      decoration: ScaleStyle.box(bg, radius: 8),
       constraints: const BoxConstraints(minWidth: 46),
       child: Column(children: [
-        Text(label, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: _textColorFor(bg).withOpacity(0.75))),
-        Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: _textColorFor(bg))),
+        Text(label, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: _scaleText(bg).withOpacity(0.75))),
+        Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: _scaleText(bg))),
       ]),
     );
 
@@ -925,13 +944,11 @@ Widget _cellColored(String text, Color color, {String? statKey, String? statName
 }
 
 Widget _cellColoredBox(String text, Color color) => Container(
-      color: color,
-      padding: const EdgeInsets.all(6),
+      decoration: ScaleStyle.box(color),
+      padding: const EdgeInsets.all(5),
       child: Text(text,
           style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w700,
-              color: (color == AppColors.perfExcellent || color == AppColors.perfPoor || color == AppColors.perfBelowAvg)
-                  ? Colors.white
-                  : AppColors.colText)),
+              color: ScaleStyle.isTier(color) ? ScaleStyle.textOn(color) : AppColors.colText)),
     );
