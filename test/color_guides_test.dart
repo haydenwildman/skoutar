@@ -30,7 +30,7 @@ void main() {
     test('every graded stat yields five tier lines whose colors match perfHex', () {
       const stats = [
         'ERA', 'WHIP', 'K_pct', 'BB_pct', 'whiff_pct', 'f_strike', 'kbb_pct', 'AVG', 'OBP_allowed',
-        'SLG', 'PPA', 'usage_predictability', 'seq_score', 'ball_pct', 'gb_pct', 'fb_pct', 'ld_pct',
+        'SLG', 'PPA', 'usage_predictability', 'seq_score', 'ball_pct', 'gb_pct', 'fb_pct', 'ld_pct', 'out_pct',
         'batter_AVG', 'batter_OBP', 'batter_SLG', 'batter_OPS', 'batter_BB_pct', 'batter_K_pct', 'batter_BABIP',
       ];
       for (final s in stats) {

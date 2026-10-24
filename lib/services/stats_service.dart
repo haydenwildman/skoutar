@@ -142,6 +142,15 @@ Color perfHex(String stat, double? value) {
       if (v < 40) return AppColors.perfAverage;
       if (v < 48) return AppColors.perfBelowAvg;
       return AppColors.perfPoor;
+    case 'out_pct':
+      // Out % of plate appearances (batter retired) — higher is better. It is the
+      // complement of on-base rate, so the cutoffs mirror OBP_allowed
+      // (.270 / .320 / .370 / .420 -> 73 / 68 / 63 / 58 % outs).
+      if (v > 73) return AppColors.perfExcellent;
+      if (v > 68) return AppColors.perfGood;
+      if (v > 63) return AppColors.perfAverage;
+      if (v > 58) return AppColors.perfBelowAvg;
+      return AppColors.perfPoor;
     case 'ld_pct':
       // Line Drive % — lower is better (highest-AVG batted-ball type).
       if (v < 15) return AppColors.perfExcellent;
@@ -329,6 +338,7 @@ const Map<String, List<double>> _statProgressBounds = {
   'gb_pct': [15, 30, 38, 45, 55, 70],
   'fb_pct': [60, 48, 40, 32, 25, 10],
   'ld_pct': [40, 30, 25, 20, 15, 5],
+  'out_pct': [40, 58, 63, 68, 73, 90],
   // Batter History "Overall Stats" — pitcher's-point-of-view direction,
   // the reverse of a plain hitter-view scale. Keep in sync with the
   // batter_* cases in perfHex above (same breakpoint numbers, flipped).
@@ -365,6 +375,7 @@ const Map<String, double> _statScaleMax = {
   'gb_pct': 100,
   'fb_pct': 100,
   'ld_pct': 100,
+  'out_pct': 100,
   'batter_AVG': 0.500,
   'batter_OBP': 0.600,
   'batter_SLG': 1.000,
@@ -473,6 +484,8 @@ String? statScaleHint(String stat) {
       return 'Elite < 25%  ·  Poor 48%+';
     case 'ld_pct':
       return 'Elite < 15%  ·  Poor 30%+';
+    case 'out_pct':
+      return 'Elite 73%+  ·  Poor ≤ 58%';
     case 'batter_AVG':
       return 'Elite .350+  ·  Poor < .200';
     case 'batter_OBP':
@@ -943,6 +956,7 @@ class StatsService {
     final countAB = <String, int>{};
     final countHits = <String, int>{};
     final countTotals = <String, int>{};
+    final countStrikes = <String, int>{};
     final pitchTypesSeen = <String>{};
 
     for (final entry in byPA.entries) {
@@ -964,7 +978,10 @@ class StatsService {
         cellN[cellKey] = (cellN[cellKey] ?? 0) + 1;
         countTotals[countStr] = (countTotals[countStr] ?? 0) + 1;
         final isStrike = {'ss', 'sl', 'f', 'ip'}.contains(p.call);
-        if (isStrike) cellStrikes[cellKey] = (cellStrikes[cellKey] ?? 0) + 1;
+        if (isStrike) {
+          cellStrikes[cellKey] = (cellStrikes[cellKey] ?? 0) + 1;
+          countStrikes[countStr] = (countStrikes[countStr] ?? 0) + 1;
+        }
         if (identical(p, finalPitch)) {
           // Official at-bat = every result except a walk or hit-by-pitch
           // (strikeouts, outs in play, errors and hits all count).
@@ -1004,6 +1021,11 @@ class StatsService {
           'n': n,
           'totalAtCount': tot,
           'usagePct': tot > 0 ? _round(n / tot * 100, 0) : null,
+          // Same ratios to one decimal (Count Tendencies shows 66.7%, not 67%).
+          // usagePct = pitches of this type at this count ÷ ALL pitches at this count.
+          'usagePct1': tot > 0 ? _round(n / tot * 100, 1) : null,
+          'strikes': strikes,
+          'strikePct1': _round(strikes / n * 100, 1),
           'strikePct': _round(strikes / n * 100, 0),
           'baa': ab >= 1 ? _round(hits / ab, 3) : null,
           'ab': ab,
@@ -1028,6 +1050,7 @@ class StatsService {
       'counts': allCounts,
       'pitchTypes': pitchTypes,
       'countTotals': countTotals,
+      'countStrikes': countStrikes,
       'cells': cells,
       'countBaa': countBaa,
     };
@@ -1067,7 +1090,12 @@ class StatsService {
       final hbpN = finals.fold<int>(0, (s, r) => s + r.hbp);
       final abN = finals.fold<int>(0, (s, r) => s + r.ab);
       int outcomeCount(String o) => finals.where((r) => r.event.outcome == o).length;
+      // Called strikes ÷ real pitches (same pitch set as Strike % / Ball %).
+      final livePitches = _livePitches(gameData);
+      final calledStrikes = livePitches.where((e) => e.call == 'sl').length;
       rows.add({
+        'calledStrikePct':
+            livePitches.isNotEmpty ? _round(calledStrikes / livePitches.length * 100, 1) : null,
         'pitches': pb == null ? 0 : pb['n'],
         'ab': abN,
         'doubles': outcomeCount('2b'),
@@ -1259,21 +1287,6 @@ class StatsService {
     }
     result.sort((a, b) => (b['score'] as double).compareTo(a['score'] as double));
     return result;
-  }
-
-  /// Every plate appearance's explainable sequencing score, newest first,
-  /// for the at-bat review list. [history] is the full pitch list used for
-  /// batter history; [data] is what is shown (e.g. a team/game filter).
-  static List<PaScore> sequencingByAtBat(
-    List<PitchEvent> data, {
-    List<PitchEvent>? history,
-  }) {
-    final shown = {for (final e in data) e.id};
-    return SequenceScoring.scoreAll(history ?? data)
-        .where((s) => shown.contains(s.pitches.first.id))
-        .toList()
-        .reversed
-        .toList();
   }
 
   /// Put-away pitch: distribution of final pitch type on strikeouts.

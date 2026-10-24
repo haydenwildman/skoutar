@@ -107,9 +107,13 @@ void main() {
 
     await t.tap(find.text('Approach'));
     await t.pumpAndSettle();
-    for (final l in ['Usage %', 'Take %', 'Swing %', 'Whiff %', 'Foul %']) {
+    for (final l in ['Take %', 'Swing %', 'Whiff %', 'Foul %']) {
       expect(hasHeader(l), isTrue, reason: l);
     }
+    // Usage is no longer its own column: it sits beside each pitch name.
+    expect(hasHeader('Usage %'), isFalse);
+    final fb = StatsService.pitchBreakdown(_data).firstWhere((r) => r['pitchType'] == 'fb');
+    expect(find.text('${fb['usagePct']}%'), findsWidgets);
     expect(hasHeader('BAA'), isFalse);
     expect(find.text('Pitch'), findsOneWidget);
 

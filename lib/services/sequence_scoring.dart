@@ -308,44 +308,76 @@ class SequenceScoring {
   // ───────────────────── plate-appearance split ─────────────────────
 
   /// Splits logged pitch rows into plate appearances, in chronological order.
-  /// Same approach as BatterHistoryService: a PA is a run of pitches ending at
-  /// the first pitch carrying an outcome; a change of the stored PA sequence
-  /// number (`batter`) also starts a new PA. Dead-ball ('dk') rows are not
-  /// pitches; a PA that ends on one is dropped (not an at-bat result).
+  ///
+  /// Reconstruction does NOT trust the order of [data]. Rows are grouped by
+  /// game (opponent + game # + season) and by the stored plate-appearance
+  /// sequence number (`batter`), then ordered inside each group by the stored
+  /// pitch number (`pitchNum`). Pitches are saved and reloaded in timestamp
+  /// order, so a row added with "Insert Row Above" (new timestamp) or rows
+  /// sharing a timestamp can come back in a different order than they were
+  /// thrown. Rebuilding from the stored keys keeps every plate appearance
+  /// whole in that case (the old approach cut a new PA every time the stored
+  /// sequence number changed between neighbouring rows, which shredded such
+  /// at-bats into 1-2 pitch fragments that could never form a 3-pitch
+  /// sequence).
+  ///
+  /// A PA ends at the first pitch carrying an outcome; any further rows with
+  /// the same sequence number start a new PA (duplicate/edited numbering).
+  /// Games are ordered by their earliest timestamp, PAs by sequence number.
+  /// Dead-ball ('dk') rows are not pitches; a PA that ends on one is dropped.
   static List<List<PitchEvent>> splitPlateAppearances(List<PitchEvent> data) {
-    final open = <String, List<PitchEvent>>{};
-    final openSeq = <String, int>{};
-    final all = <List<PitchEvent>>[];
-    final voided = <List<PitchEvent>>{};
-    for (final p in data) {
+    // gameKey -> batterSeq -> rows (with original index as a stable tiebreak)
+    final games = <String, Map<int, List<(int, PitchEvent)>>>{};
+    final gameFirst = <String, (DateTime, int)>{};
+    for (var i = 0; i < data.length; i++) {
+      final p = data[i];
       if (p.eventType != 'pitch') continue;
       final gk = '${p.game}|${p.gameNumber}|${p.season}';
-      if (p.call == 'dk') {
-        final cur = open[gk];
-        if (cur != null && p.isFinalPitchOfPA) {
-          voided.add(cur);
-          open.remove(gk);
-          openSeq.remove(gk);
+      games.putIfAbsent(gk, () => {}).putIfAbsent(p.batter, () => []).add((i, p));
+      final f = gameFirst[gk];
+      if (f == null || p.timestamp.isBefore(f.$1)) gameFirst[gk] = (p.timestamp, f?.$2 ?? i);
+    }
+    final gameOrder = games.keys.toList()
+      ..sort((a, b) {
+        final c = gameFirst[a]!.$1.compareTo(gameFirst[b]!.$1);
+        return c != 0 ? c : gameFirst[a]!.$2.compareTo(gameFirst[b]!.$2);
+      });
+
+    final out = <List<PitchEvent>>[];
+    for (final gk in gameOrder) {
+      final byBatter = games[gk]!;
+      final seqs = byBatter.keys.toList()..sort();
+      for (final seq in seqs) {
+        final rows = byBatter[seq]!
+          ..sort((a, b) {
+            final pa = a.$2.pitchNum, pb = b.$2.pitchNum;
+            if (pa != null && pb != null && pa != pb) return pa.compareTo(pb);
+            return a.$1.compareTo(b.$1);
+          });
+        var cur = <PitchEvent>[];
+        var voided = false;
+        void close() {
+          if (cur.isNotEmpty && !voided) out.add(cur);
+          cur = <PitchEvent>[];
+          voided = false;
         }
-        continue;
-      }
-      var cur = open[gk];
-      if (cur == null || openSeq[gk] != p.batter) {
-        cur = <PitchEvent>[];
-        open[gk] = cur;
-        openSeq[gk] = p.batter;
-        all.add(cur);
-      }
-      cur.add(p);
-      if (p.isFinalPitchOfPA) {
-        open.remove(gk);
-        openSeq.remove(gk);
+
+        for (final r in rows) {
+          final p = r.$2;
+          if (p.call == 'dk') {
+            if (p.isFinalPitchOfPA) {
+              voided = true;
+              close();
+            }
+            continue;
+          }
+          cur.add(p);
+          if (p.isFinalPitchOfPA) close();
+        }
+        close(); // an unfinished PA (no outcome yet) is kept as in-progress
       }
     }
-    return [
-      for (final pa in all)
-        if (pa.isNotEmpty && !voided.contains(pa)) pa,
-    ];
+    return out;
   }
 
   static int? _jerseyOf(List<PitchEvent> pa) {

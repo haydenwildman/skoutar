@@ -5,6 +5,7 @@ import '../services/app_session.dart';
 import '../services/stats_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glow.dart';
+import '../widgets/stat_box.dart';
 import '../widgets/stat_vbox.dart';
 import '../widgets/stat_hold_info.dart';
 import '../services/color_guides.dart';
@@ -155,21 +156,23 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
                 height: 240,
                 child: spots.isEmpty
                     ? const Center(child: Text('—', style: TextStyle(color: Colors.grey)))
-                    // Give every game its own fixed width (instead of squeezing
-                    // all of them into whatever the card happens to be) so dots
-                    // and opponent labels stay legible, and scroll horizontally
-                    // for games that don't fit — never crop the graph.
+                    // The chart always fills exactly the width its card has:
+                    // the old code reserved a fixed 76px per game and put the
+                    // chart in a horizontal scroll view, so every added game
+                    // widened it. Now the games share the available width, and
+                    // only the opponent LABELS are thinned (every Nth, always
+                    // including the latest game) when they would collide.
+                    // Every game keeps its dot; tap/hover shows any game.
                     : LayoutBuilder(builder: (context, constraints) {
-                        const perPoint = 76.0;
-                        // (games + the two padding slots) * width per slot, plus the
-                        // left axis column — so every dot keeps its full spacing.
-                        final pointsWidth = (log.length - 1 + 2 * xPad) * perPoint + 40;
-                        final chartWidth =
-                            pointsWidth > constraints.maxWidth ? pointsWidth : constraints.maxWidth;
-                        return SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: SizedBox(
-                            width: chartWidth,
+                        const leftAxis = 34.0; // matches leftTitles reservedSize
+                        const minLabelGap = 24.0; // px between rotated labels
+                        final slots = (maxIndex < 0 ? 0 : maxIndex) + 2 * xPad;
+                        final slotPx = ((constraints.maxWidth - leftAxis) / slots).clamp(1.0, 1000.0);
+                        final labelStep = (minLabelGap / slotPx).ceil().clamp(1, 1000);
+                        final dotRadius = slotPx >= 16 ? 5.0 : (slotPx >= 10 ? 3.5 : 2.5);
+                        final dotStroke = slotPx >= 10 ? 2.0 : 1.0;
+                        return SizedBox(
+                            width: constraints.maxWidth,
                             height: 240,
                             child: LineChart(
                               LineChartData(
@@ -197,9 +200,9 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
                                 getDotPainter: (spot, percent, bar, index) {
                                   final color = perfHex(perfStat, spot.y);
                                   return FlDotCirclePainter(
-                                    radius: 5,
+                                    radius: dotRadius,
                                     color: color,
-                                    strokeWidth: 2,
+                                    strokeWidth: dotStroke,
                                     strokeColor: Colors.white,
                                   );
                                 },
@@ -251,6 +254,10 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
                                   if ((v - i).abs() > 0.01 || i < 0 || i >= log.length) {
                                     return const SizedBox();
                                   }
+                                  // Thin labels from the newest game backwards.
+                                  if ((log.length - 1 - i) % labelStep != 0) {
+                                    return const SizedBox();
+                                  }
                                   return SideTitleWidget(
                                     axisSide: meta.axisSide,
                                     child: Transform.rotate(
@@ -274,7 +281,6 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
                           borderData: FlBorderData(show: false),
                         ),
                               ),
-                            ),
                           );
                         }),
               ),
@@ -350,72 +356,6 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
             ),
           ),
         ),
-        Builder(builder: (context) {
-          final cd = StatsService.countApproach(data);
-          final gcs = StatsService.groupedCountStats(data);
-          return GlowCard(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text('Count & Approach Snapshot', style: TextStyle(fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 4),
-                  const Text('How counts played out across these games — see the Count & Approach tab for full detail.',
-                      style: TextStyle(fontSize: 11, color: AppColors.colMuted, fontStyle: FontStyle.italic)),
-                  const SizedBox(height: 4),
-                  PerfStatBar(
-                    label: 'F-Strike%',
-                    description: 'First-pitch strike percentage: plate appearances that started with a strike ÷ all plate appearances.',
-                    value: cd['fpsPct'] != null ? '${cd['fpsPct']}%' : 'N/A',
-                    color: perfHex('f_strike', cd['fpsPct'] as double?),
-                    scaleHint: statScaleHint('f_strike'),
-                    statKey: 'f_strike',
-                    rawValue: cd['fpsPct'] as double?,
-                  ),
-                  PerfStatBar(
-                    label: 'Ahead OBP',
-                    description: 'On-base percentage allowed when the pitcher was ahead in the count.',
-                    value: cd['aheadOBP'] != null ? (cd['aheadOBP'] as double).toStringAsFixed(3) : 'N/A',
-                    color: perfHex('OBP_allowed', cd['aheadOBP'] as double?),
-                    scaleHint: statScaleHint('OBP_allowed'),
-                    statKey: 'OBP_allowed',
-                    rawValue: cd['aheadOBP'] as double?,
-                  ),
-                  PerfStatBar(
-                    label: 'Behind OBP',
-                    description: 'On-base percentage allowed when the pitcher was behind in the count.',
-                    value: cd['behindOBP'] != null ? (cd['behindOBP'] as double).toStringAsFixed(3) : 'N/A',
-                    color: perfHex('OBP_allowed', cd['behindOBP'] as double?),
-                    scaleHint: statScaleHint('OBP_allowed'),
-                    statKey: 'OBP_allowed',
-                    rawValue: cd['behindOBP'] as double?,
-                  ),
-                  PerfStatBar(
-                    label: 'Two-Strike Count %',
-                    description: 'Share of plate appearances that reached a two-strike count.',
-                    colorNote: 'This bar is graded on the same cutoffs as First-Pitch Strike % (F-Strike%).',
-                    value: gcs['twoStrikePct'] != null ? '${gcs['twoStrikePct']}%' : 'N/A',
-                    color: perfHex('f_strike', gcs['twoStrikePct'] as double?),
-                    scaleHint: statScaleHint('f_strike'),
-                    statKey: 'f_strike',
-                    rawValue: gcs['twoStrikePct'] as double?,
-                  ),
-                  PerfStatBar(
-                    label: 'Hitter\'s Count %',
-                    description: 'Share of plate appearances that reached a hitter\'s count (a count favoring the batter).',
-                    colorNote: 'This bar is graded on the same cutoffs as Walk % (BB%), so a larger hitter\'s-count share trends toward orange/red.',
-                    value: gcs['hittersCountPct'] != null ? '${gcs['hittersCountPct']}%' : 'N/A',
-                    color: perfHex('BB_pct', gcs['hittersCountPct'] as double?),
-                    scaleHint: statScaleHint('BB_pct'),
-                    statKey: 'BB_pct',
-                    rawValue: gcs['hittersCountPct'] as double?,
-                  ),
-                ],
-              ),
-            ),
-          );
-        }),
       ],
     );
   }
@@ -457,6 +397,7 @@ const List<_ColumnLabel> _gameLogColumns = [
   _ColumnLabel('Swing%', 'Swings ÷ all pitches'),
   _ColumnLabel('Foul%', 'Foul balls ÷ swings'),
   _ColumnLabel('InPlay%', 'Balls put in play ÷ all pitches'),
+  _ColumnLabel('CStr%', 'Called-strike % — called strikes ÷ all pitches'),
   _ColumnLabel('Cont%', 'Contact % — (fouls + balls in play) ÷ swings'),
   _ColumnLabel('GB% / FB% / LD%', 'Share of balls in play that were ground balls / fly balls / line drives'),
 ];
@@ -497,135 +438,175 @@ class _GameLogColumnLegend extends StatelessWidget {
   }
 }
 
-/// One game in the Full Game Log: a header plus every stat that applies to the
-/// game, laid out as a wrapping grid of small tiles so the stats use the full
-/// available width (many per line on wide screens, fewer on phones) instead of
-/// stacking vertically. Stats without data for the game are left out.
+/// One game in the Full Game Log, laid out like a baseball box score:
+///  1. a distinct heading band (opponent and game number),
+///  2. the traditional pitching line,
+///  3. the pitching summary (ERA / WHIP / AVG / OBP / SLG),
+///  4. the advanced analytics in labeled groups.
+/// Every table uses the same fixed column width, so a column lines up from one
+/// game to the next, and a table wider than the screen scrolls sideways inside
+/// itself instead of wrapping or overlapping. Graded values get a subtle tint
+/// from the same cutoffs as before; a value with no data shows a dash.
 class _GameLogCard extends StatelessWidget {
   final Map<String, dynamic> row;
   const _GameLogCard({required this.row});
 
-  static String _f(Object? v, int d) => v == null ? '' : (v as num).toStringAsFixed(d);
+  static String _f(Object? v, int d) => v == null ? kUnavailable : (v as num).toStringAsFixed(d);
+  static String _p(Object? v) => v == null ? kUnavailable : '$v%';
+
+  /// Average-style stats read ".245" like a box score.
+  static String _avg3(Object? v) {
+    if (v == null) return kUnavailable;
+    final t = (v as num).toStringAsFixed(3);
+    return t.startsWith('0.') ? t.substring(1) : t;
+  }
 
   @override
   Widget build(BuildContext context) {
     double? n(String k) => (row[k] as num?)?.toDouble();
 
-    Widget? plain(String label, String? text, String what) {
-      if (text == null || text.isEmpty) return null;
-      return SizedBox(
-        width: 68,
-        child: StatVBox(compact: true, label: label, value: text, description: what),
-      );
-    }
+    // Count / ungraded column.
+    BoxScoreCol plain(String label, Object? v, String what) =>
+        BoxScoreCol(label: label, value: v == null ? kUnavailable : '$v', title: label, what: what);
 
-    Widget? graded(String label, double? v, String text, String key, String what, {String? note}) {
-      if (v == null) return null;
-      final bg = perfHex(key, v);
-      final dark = bg == AppColors.perfExcellent || bg == AppColors.perfPoor || bg == AppColors.perfBelowAvg;
-      return SizedBox(
-        width: 68,
-        child: StatVBox(
-          compact: true,
+    // Column graded with a perfHex ladder.
+    BoxScoreCol graded(String label, double? v, String text, String key, String what, {String? note}) =>
+        BoxScoreCol(
           label: label,
-          value: text,
-          background: bg,
-          textColor: dark ? Colors.white : AppColors.colText,
-          description: what,
-          statKey: key,
-          colorNote: note,
-        ),
-      );
-    }
+          value: v == null ? kUnavailable : text,
+          tier: v == null ? null : perfHex(key, v),
+          title: label,
+          what: what,
+          colorGuide: statColorGuide(key, note: note),
+        );
 
-    Widget? related(String label, double? v, Color bg, String guide, String what) {
-      if (v == null) return null;
-      final dark = bg == AppColors.perfExcellent || bg == AppColors.perfPoor || bg == AppColors.perfBelowAvg;
-      return SizedBox(
-        width: 68,
-        child: StatVBox(
-          compact: true,
+    // Column colored by a relationship rule (Swing %, Foul %, In Play %).
+    BoxScoreCol related(String label, double? v, Color bg, String guide, String what) => BoxScoreCol(
           label: label,
-          value: '$v%',
-          background: bg,
-          textColor: dark ? Colors.white : AppColors.colText,
-          description: what,
+          value: v == null ? kUnavailable : '$v%',
+          tier: v == null ? null : bg,
+          title: label,
+          what: what,
           colorGuide: guide,
-        ),
-      );
-    }
+        );
 
     final swing = n('swingPct');
     final foul = n('foulPct');
     final inPlay = n('inPlayPct');
-    final tiles = <Widget?>[
-      plain('IP', '${row['ip']}', 'Innings pitched in this game.'),
-      plain('PIT', '${row['pitches']}', 'Pitches thrown in this game.'),
-      plain('PA', '${row['pa']}', 'Plate appearances faced.'),
-      plain('AB', '${row['ab']}', 'At-bats against (plate appearances minus walks and hit-by-pitches).'),
-      plain('H', '${row['h']}', 'Hits allowed.'),
-      plain('2B', '${row['doubles']}', 'Doubles allowed.'),
-      plain('3B', '${row['triples']}', 'Triples allowed.'),
-      plain('HR', '${row['hr']}', 'Home runs allowed.'),
-      plain('BB', '${row['bb']}', 'Walks allowed.'),
-      if ((row['hbp'] as int? ?? 0) > 0) plain('HBP', '${row['hbp']}', 'Batters hit by a pitch.'),
-      plain('K', '${row['k']}', 'Strikeouts.'),
-      plain('ER', '${row['er']}', 'Earned runs allowed.'),
-      if ((row['po'] as int? ?? 0) > 0)
-        plain('PO', '${row['po']}', 'Outs on pickoffs, caught stealing and throw-outs.'),
+
+    // The runs-allowed column is intentionally absent: SKOUTAR stores earned
+    // runs per pitch (ER) but not total runs, so there is no real value to show.
+    final pitchingLine = <BoxScoreCol>[
+      plain('IP', row['ip'], 'Innings pitched in this game.'),
+      plain('H', row['h'], 'Hits allowed.'),
+      plain('ER', row['er'], 'Earned runs allowed.'),
+      plain('BB', row['bb'], 'Walks allowed.'),
+      plain('K', row['k'], 'Strikeouts.'),
+      plain('PIT', row['pitches'], 'Pitches thrown in this game.'),
+      plain('PA', row['pa'], 'Plate appearances faced.'),
+      plain('AB', row['ab'], 'At-bats against (plate appearances minus walks and hit-by-pitches).'),
+      plain('2B', row['doubles'], 'Doubles allowed.'),
+      plain('3B', row['triples'], 'Triples allowed.'),
+      plain('HR', row['hr'], 'Home runs allowed.'),
+      plain('HBP', row['hbp'], 'Batters hit by a pitch.'),
+      plain('PO', row['po'], 'Outs on pickoffs, caught stealing and throw-outs.'),
+    ];
+
+    final summary = <BoxScoreCol>[
       graded('ERA', n('era'), _f(row['era'], 2), 'ERA', 'Earned Run Average for this game: earned runs × 9 ÷ innings pitched.'),
       graded('WHIP', n('whip'), _f(row['whip'], 3), 'WHIP', 'Walks + hits per inning pitched in this game.'),
-      graded('AVG', n('avg'), _f(row['avg'], 3), 'AVG', 'Batting average against: hits ÷ at-bats.'),
-      graded('OBP', n('obp'), _f(row['obp'], 3), 'OBP_allowed',
+      graded('AVG', n('avg'), _avg3(row['avg']), 'AVG', 'Batting average against: hits ÷ at-bats.'),
+      graded('OBP', n('obp'), _avg3(row['obp']), 'OBP_allowed',
           'On-base percentage against: (hits + walks + hit-by-pitches) ÷ plate appearances.'),
-      graded('SLG', n('slg'), _f(row['slg'], 3), 'SLG', 'Slugging percentage against: total bases ÷ at-bats.'),
-      graded('K%', n('kPct'), row['kPct'] == null ? '' : '${row['kPct']}%', 'K_pct',
-          'Strikeout percentage: strikeouts ÷ plate appearances.'),
-      graded('BB%', n('bbPct'), row['bbPct'] == null ? '' : '${row['bbPct']}%', 'BB_pct',
-          'Walk percentage: walks ÷ plate appearances.'),
-      graded('K-BB%', n('kbb'), row['kbb'] == null ? '' : '${row['kbb']}%', 'kbb_pct',
-          'Strikeout percentage minus walk percentage.'),
-      graded('P/PA', n('ppa'), _f(row['ppa'], 2), 'PPA', 'Pitches thrown per plate appearance.'),
-      graded('F-Str%', n('fStrikePct'), row['fStrikePct'] == null ? '' : '${row['fStrikePct']}%', 'f_strike',
-          'First-pitch strike percentage: plate appearances that started with a strike ÷ all plate appearances.'),
-      graded('Str%', n('strikePct'), row['strikePct'] == null ? '' : '${row['strikePct']}%', 'f_strike',
+      graded('SLG', n('slg'), _avg3(row['slg']), 'SLG', 'Slugging percentage against: total bases ÷ at-bats.'),
+    ];
+
+    final command = <BoxScoreCol>[
+      graded('Str%', n('strikePct'), _p(row['strikePct']), 'f_strike',
           'Strike percentage: strikes (called, swinging, foul, in play) ÷ all pitches.',
           note: 'Strike % uses the same cutoffs as First-Pitch Strike % (F-Strike%).'),
-      graded('Ball%', n('ballPct'), row['ballPct'] == null ? '' : '${row['ballPct']}%', 'ball_pct',
-          'Ball percentage: balls ÷ all pitches.'),
-      graded('Whiff%', n('whiffPct'), row['whiffPct'] == null ? '' : '${row['whiffPct']}%', 'whiff_pct',
-          'Whiff percentage: swinging misses ÷ swings.'),
+      graded('F-Str%', n('fStrikePct'), _p(row['fStrikePct']), 'f_strike',
+          'First-pitch strike percentage: plate appearances that started with a strike ÷ all plate appearances.'),
+      graded('Ball%', n('ballPct'), _p(row['ballPct']), 'ball_pct', 'Ball percentage: balls ÷ all pitches.'),
+      graded('BB%', n('bbPct'), _p(row['bbPct']), 'BB_pct', 'Walk percentage: walks ÷ plate appearances.'),
+      graded('P/PA', n('ppa'), _f(row['ppa'], 2), 'PPA', 'Pitches thrown per plate appearance.'),
+    ];
+
+    final swingMiss = <BoxScoreCol>[
+      graded('Whiff%', n('whiffPct'), _p(row['whiffPct']), 'whiff_pct', 'Whiff percentage: swinging misses ÷ swings.'),
       related('Swing%', swing, swingPctColor(swing, n('whiffPct')), swingPctColorGuide(),
           'Swing percentage: swings ÷ all pitches.'),
       related('Foul%', foul, foulPctColor(foul), foulPctColorGuide(), 'Foul percentage: foul balls ÷ swings.'),
+      plain('CStr%', row['calledStrikePct'] == null ? null : '${row['calledStrikePct']}%',
+          'Called-strike percentage: pitches taken for a strike ÷ all pitches.'),
+      plain('Cont%', row['contactPct'] == null ? null : '${row['contactPct']}%',
+          'Contact percentage: (foul balls + balls in play) ÷ swings.'),
+      graded('K%', n('kPct'), _p(row['kPct']), 'K_pct', 'Strikeout percentage: strikeouts ÷ plate appearances.'),
+      graded('K-BB%', n('kbb'), _p(row['kbb']), 'kbb_pct', 'Strikeout percentage minus walk percentage.'),
+    ];
+
+    final battedBall = <BoxScoreCol>[
       related('InPlay%', inPlay, inPlayPctColor(inPlay, n('bipOutPct')), inPlayPctColorGuide(),
           'In-play percentage: balls put in play ÷ all pitches.'),
-      if (row['contactPct'] != null)
-        plain('Cont%', '${row['contactPct']}%', 'Contact percentage: (foul balls + balls in play) ÷ swings.'),
-      graded('GB%', n('groundBallPct'), row['groundBallPct'] == null ? '' : '${row['groundBallPct']}%', 'gb_pct',
+      graded('GB%', n('groundBallPct'), _p(row['groundBallPct']), 'gb_pct',
           'Ground-ball percentage: ground balls ÷ balls in play with a known type.'),
-      graded('FB%', n('flyBallPct'), row['flyBallPct'] == null ? '' : '${row['flyBallPct']}%', 'fb_pct',
+      graded('FB%', n('flyBallPct'), _p(row['flyBallPct']), 'fb_pct',
           'Fly-ball percentage: fly balls ÷ balls in play with a known type.'),
-      graded('LD%', n('lineDrivePct'), row['lineDrivePct'] == null ? '' : '${row['lineDrivePct']}%', 'ld_pct',
+      graded('LD%', n('lineDrivePct'), _p(row['lineDrivePct']), 'ld_pct',
           'Line-drive percentage: line drives ÷ balls in play with a known type.'),
-    ].where((w) => w != null).toList();
+    ];
+
+    Widget group(String title, List<BoxScoreCol> cols) => Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 3),
+              child: Text(title.toUpperCase(),
+                  style: const TextStyle(
+                      fontSize: 10.5, fontWeight: FontWeight.w900, letterSpacing: 0.6, color: AppColors.brandOrangeDeep)),
+            ),
+            BoxScoreTable(cols: cols),
+          ]),
+        );
 
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(10),
+      margin: const EdgeInsets.only(bottom: 10),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: AppColors.colBorder, width: 1.5),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('vs ${row['opponent']}  ·  Game ${row['gameNumber']}',
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
-          const SizedBox(height: 8),
-          Wrap(spacing: 6, runSpacing: 6, children: [for (final t in tiles) t!]),
+          // Heading band: clearly separate from the numbers below.
+          Container(
+            color: AppColors.tint,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(children: [
+              Expanded(
+                child: Text('vs ${row['opponent']}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
+              ),
+              Text('Game ${row['gameNumber']}',
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: AppColors.colMuted)),
+            ]),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              BoxScoreTable(cols: pitchingLine),
+              const SizedBox(height: 8),
+              BoxScoreTable(cols: summary),
+              group('Command and control', command),
+              group('Swing and miss', swingMiss),
+              group('Batted-ball results', battedBall),
+            ]),
+          ),
         ],
       ),
     );

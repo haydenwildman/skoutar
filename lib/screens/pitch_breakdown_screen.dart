@@ -307,7 +307,7 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
           // stat the table already had (Ball % rides with the Results view).
           const viewOrder = <_ProfileView, List<String>>{
             _ProfileView.results: ['BAA', 'Strike %', 'K%', 'BB%', 'Ball %'],
-            _ProfileView.approach: ['Usage %', 'Take %', 'Swing %', 'Whiff %', 'Foul %'],
+            _ProfileView.approach: ['Take %', 'Swing %', 'Whiff %', 'Foul %'],
             _ProfileView.contact: ['In Play %', 'Ground Ball %', 'Fly Ball %', 'Line Drive %'],
           };
           final byLabel = {for (final m in metrics) m.label: m};
@@ -381,6 +381,7 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
           Widget pitchLabelCell({
             required String name,
             required int pitches,
+            double? usagePct,
             required Color color,
             required String what,
             required String colorGuide,
@@ -389,7 +390,8 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
               title: name,
               description: composeHoldInfo(
                 what: '$what\n\nPitch count: $pitches pitch${pitches == 1 ? '' : 'es'} thrown '
-                    '(every recorded pitch of this type; at-bats, strikes and balls are not mixed into this number).',
+                    '(every recorded pitch of this type; at-bats, strikes and balls are not mixed into this number).'
+                    '${usagePct == null ? '' : '\n\n${_pitchMetricInfo['Usage %']}\n\nUsage: $usagePct%'}',
                 colorGuide: colorGuide,
               ),
               child: Container(
@@ -400,6 +402,14 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
                   Text(name,
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 11)),
+                  // Usage % sits right beside the pitch name (pitches of this
+                  // type / all pitches in the current filter).
+                  if (usagePct != null)
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text('$usagePct%',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12)),
+                    ),
                   const SizedBox(height: 3),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -524,7 +534,7 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
                     border: TableBorder.all(color: AppColors.colBorder, width: 1),
                     defaultVerticalAlignment: TableCellVerticalAlignment.fill,
                     defaultColumnWidth: const FlexColumnWidth(1),
-                    columnWidths: {0: narrow ? const FixedColumnWidth(56) : const FlexColumnWidth(0.9)},
+                    columnWidths: {0: narrow ? const FixedColumnWidth(62) : const FlexColumnWidth(0.9)},
                     children: [
                       TableRow(
                         decoration: const BoxDecoration(color: AppColors.ink),
@@ -574,6 +584,7 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
                               pitchLabelCell(
                                 name: (row['pitchType'] as String).toUpperCase(),
                                 pitches: row['n'] as int,
+                                usagePct: row['usagePct'] as double?,
                                 color: AppColors.pitchColor(row['pitchType'] as String),
                                 what: 'This row shows every stat for this one pitch type. Tap the row to highlight it.',
                                 colorGuide: pitchTypeColorGuide([row['pitchType'] as String]),

@@ -10,7 +10,9 @@ import '../widgets/stat_hold_info.dart';
 import '../services/color_guides.dart';
 import '../widgets/year_filter_dropdown.dart';
 import '../widgets/sequence_breakdown.dart';
-import '../services/sequence_scoring.dart';
+import '../services/sequence_analytics.dart';
+import '../widgets/sequence_analytics_view.dart';
+import '../widgets/count_tendencies_view.dart';
 
 const String _seqScoreWhat =
     'Score (0-100) rates the pitch-calling DECISIONS in the at-bats that opened this way (average of each at-bat\'s score), using only logged data - no velocity or location.\n'
@@ -47,7 +49,7 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
       data = data.where((p) => p.gameNumber == gn).toList();
     }
     final seqs = StatsService.pitchSequencing(data, history: session.filteredPitches);
-    final atBats = StatsService.sequencingByAtBat(data, history: session.filteredPitches);
+    final analytics = SequenceAnalytics.build(data);
     final putAway = StatsService.putAwayPitch(data);
     final firstPitchStrike = StatsService.firstPitchStrikeByType(data);
     final teams = ['All', ...session.knownTeams];
@@ -138,22 +140,6 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
       ),
     );
 
-    if (seqs.isEmpty) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          filterRow,
-          const GlowCard(
-            child: Padding(
-              padding: EdgeInsets.all(24),
-              child: Text('Not enough data yet (need 3-pitch sequences).',
-                  style: TextStyle(color: Colors.grey)),
-            ),
-          ),
-        ],
-      );
-    }
-
     final best = List<Map<String, dynamic>>.from(seqs)
       ..sort((a, b) => (b['score'] as double).compareTo(a['score'] as double));
     final worst = seqs.where((s) => (s['count'] as int) >= 3).toList()
@@ -233,6 +219,20 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
       children: [
         filterRow,
         const SizedBox(height: 8),
+        SequenceAnalyticsView(analytics: analytics),
+        const SizedBox(height: 8),
+        if (seqs.isEmpty)
+          GlowCard(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                'Decision-score lists (Best Sequences / Sequences to Avoid) need finished at-bats with 3+ pitches; '
+                '${analytics.diagnostics.pasWith3Plus} found in this selection. The sections above still use every at-bat that is available.',
+                style: const TextStyle(color: Colors.grey),
+              ),
+            ),
+          )
+        else
         ResponsiveRow(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -243,8 +243,8 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Best Sequences (Top 5)', style: TextStyle(fontWeight: FontWeight.w800)),
-                      const Text('Ranked by Sequence Score - decision quality, not just results. Tap "Why this score" on a card.',
+                      const Text('Best Sequences by Decision Score (Top 5)', style: TextStyle(fontWeight: FontWeight.w800)),
+                      const Text('MODELED score with design-chosen weights (not validated, not a statistic). For measured results see Sequence effectiveness above. Tap "Why this score" on a card.',
                           style: TextStyle(fontSize: 10.5, color: AppColors.colMuted, fontStyle: FontStyle.italic)),
                       const SizedBox(height: 8),
                       for (final s in best.take(5)) seqCard(s, true),
@@ -274,7 +274,6 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
             ),
           ],
         ),
-        _AtBatReviewCard(atBats: atBats),
         GlowCard(
           child: Padding(
             padding: const EdgeInsets.all(12),
@@ -337,24 +336,25 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
                 StatHoldInfo(
                   title: 'Count Tendencies',
                   description: composeHoldInfo(
-                    what: 'Rows are pitch types; columns are counts (balls-strikes, with n = pitches thrown at that count). '
-                        'Each cell has two stacked blocks: STR% (top, how often the pitch was a strike) and BAA (bottom, batting average against).\n'
-                        'Read across a row to see where a pitch is used; read down a column to compare pitches at one count. A "—" cell has no pitches.\n'
-                        'The last row (ALL) is the BAA at each count with every pitch type combined: hits ÷ official at-bats whose final pitch was thrown at that count (walks and hit-by-pitches are not at-bats, and unfinished at-bats are left out).',
-                    colorGuide: 'Each block is colored on its own, from dark green (best) to red (worst), using that stat\'s own cutoffs.\n'
-                        'Press and hold any colored block to see its exact cutoffs and why it has that color.\n'
-                        '${swatchLine(noDataGray, 'Gray block: not enough data for that stat')}',
+                    what: 'One card per count (balls-strikes) that has recorded pitches. Each row is a pitch type thrown at that count, '
+                        'showing in this order: USAGE % with N (that pitch type\'s share of ALL pitches thrown at the count, and how many pitches that is), '
+                        'STRIKE % (how often that pitch was a strike) and BAA (batting average against).\n'
+                        'BAA credits an at-bat only to the pitch that ended it, counts official at-bats only (no walks or hit-by-pitches), and shows a dash when no at-bat ended on that pitch at that count.\n'
+                        'The ALL row combines every pitch type at the count. Pitch types never thrown at a count are not listed.',
+                    colorGuide: 'Usage is not graded: using a pitch more or less often is not good or bad by itself, so its box has no performance color.\n'
+                        'Strike % and BAA are tinted green (favorable) to red (unfavorable) with their own cutoffs. Hover or press and hold a box for its numbers and cutoffs.\n'
+                        '${swatchLine(noDataGray, 'Dash: not enough data for that stat')}',
                   ),
                   child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text('Count Tendencies', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
                     Text(
-                      'Each cell: Strike% (top) · BAA (bottom). Colors are scored independently on a 5-tier scale.',
+                      'For each count: how often each pitch is thrown (Usage % and N), then Strike % and BAA. Strike % and BAA are tinted; usage is not.',
                       style: TextStyle(fontSize: 11, color: AppColors.colMuted, fontStyle: FontStyle.italic),
                     ),
                   ]),
                 ),
                 const SizedBox(height: 10),
-                _PitchUsageHeatmap(heatmap: heatmap),
+                CountTendenciesView(heatmap: heatmap),
               ],
             ),
           ),
@@ -362,13 +362,6 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
       ],
     );
   }
-}
-
-/// Formats a batting-average-style value the traditional way (".287"
-/// rather than "0.287"), without breaking for the rare 1.000 case.
-String _fmtAvg(double v) {
-  final s = v.toStringAsFixed(3);
-  return s.startsWith('0.') ? s.substring(1) : s;
 }
 
 /// One "pitch tag + progress bar + detail" row. The tag is width-bounded (so
@@ -473,279 +466,4 @@ class _MiniTag extends StatelessWidget {
         decoration: BoxDecoration(color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(6)),
         child: Text(text, style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: color)),
       );
-}
-
-/// Two-part-per-cell heat map: Strike% / BAA, each
-/// colored independently on the shared 5-tier perf scale (item 11).
-class _PitchUsageHeatmap extends StatelessWidget {
-  final Map<String, dynamic> heatmap;
-  const _PitchUsageHeatmap({required this.heatmap});
-
-  @override
-  Widget build(BuildContext context) {
-    final counts = heatmap['counts'] as List<String>;
-    final pitchTypes = heatmap['pitchTypes'] as List<String>;
-    final cells = heatmap['cells'] as Map<String, Map<String, dynamic>>;
-    final countTotals = heatmap['countTotals'] as Map<String, int>;
-    final countBaa = (heatmap['countBaa'] as Map<String, Map<String, dynamic>>?) ?? const {};
-
-    if (pitchTypes.isEmpty) {
-      return const Text('No pitch data yet.', style: TextStyle(color: Colors.grey));
-    }
-
-    Widget totalBaaCell(String count) {
-      final c = countBaa[count];
-      final ab = (c?['ab'] as int?) ?? 0;
-      final hits = (c?['hits'] as int?) ?? 0;
-      final baa = c?['baa'] as double?;
-      if (baa == null) {
-        return Container(
-          height: 48,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(color: AppColors.surfaceAlt, border: Border.all(color: AppColors.colBorder, width: 2)),
-          child: const Text('—', style: TextStyle(color: Colors.grey, fontSize: 11)),
-        );
-      }
-      final bg = perfHex('AVG', baa);
-      final fg = (bg == AppColors.perfExcellent || bg == AppColors.perfPoor || bg == AppColors.perfBelowAvg)
-          ? Colors.white
-          : AppColors.colText;
-      return StatHoldInfo(
-        title: 'BAA at $count (all pitches)',
-        description: composeHoldInfo(
-          what: 'Batting average against for at-bats whose final pitch was thrown at $count, every pitch type combined.\n'
-              '$hits hit(s) ÷ $ab official at-bat(s) = ${_fmtAvg(baa)}.\n'
-              'Walks and hit-by-pitches are not at-bats, and each at-bat is credited only to the count of its final pitch.',
-          colorGuide: statColorGuide('AVG'),
-        ),
-        child: Container(
-          width: double.infinity,
-          color: bg,
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text('BAA', style: TextStyle(fontSize: 7.5, fontWeight: FontWeight.w700, color: fg.withOpacity(0.75))),
-            Text(_fmtAvg(baa), style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: fg)),
-            Text('$hits/$ab', style: TextStyle(fontSize: 7.5, fontWeight: FontWeight.w700, color: fg.withOpacity(0.75))),
-          ]),
-        ),
-      );
-    }
-
-    Widget cellWidget(String count, String pt) {
-      final key = '$count|$pt';
-      final c = cells[key];
-      if (c == null) {
-        return Container(
-          height: 56,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(color: AppColors.surfaceAlt, border: Border.all(color: AppColors.colBorder, width: 2)),
-          child: const Text('—', style: TextStyle(color: Colors.grey, fontSize: 11)),
-        );
-      }
-      final strikePct = c['strikePct'] as double?;
-      final baa = c['baa'] as double?;
-      final strikeBg = perfHex('f_strike', strikePct);
-      final baaBg = perfHex('AVG', baa);
-      Color tc(Color bg) => (bg == AppColors.perfExcellent || bg == AppColors.perfPoor || bg == AppColors.perfBelowAvg)
-          ? Colors.white
-          : AppColors.colText;
-      Widget third(Color bg, String label, String value, String statKey, String what, String? note) {
-        final shown = '${label == 'STR%' ? 'Strike %' : 'BAA'} at $count · ${pt.toUpperCase()}';
-        return StatHoldInfo(
-          title: shown,
-          description: composeHoldInfo(
-            what: '$what\n\nThis block: $value → ${colorNameOf(bg)}.',
-            colorGuide: statColorGuide(statKey, note: note),
-          ),
-          child: Container(
-            width: double.infinity,
-            color: bg,
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text(label, style: TextStyle(fontSize: 7, fontWeight: FontWeight.w700, color: tc(bg).withOpacity(0.75))),
-              Text(value, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: tc(bg))),
-            ]),
-          ),
-        );
-      }
-      return Container(
-        decoration: BoxDecoration(border: Border.all(color: AppColors.colBorder, width: 2)),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          third(strikeBg, 'STR%', strikePct != null ? '${strikePct.toStringAsFixed(0)}' : '—',
-              'f_strike',
-              'Strike %: of this pitch type thrown at this count, the share that were strikes (called, swinging or foul).',
-              'Strike % here uses the same cutoffs as First-Pitch Strike % (F-Strike%).'),
-          third(baaBg, 'BAA', baa != null ? _fmtAvg(baa) : '—',
-              'AVG',
-              'BAA (batting average against) for ONLY the pitches of this type thrown at this count: '
-                  'each at-bat is credited to the single pitch that ended it (a hit or an out on that pitch), '
-                  'not to the earlier pitches of the at-bat.\n'
-                  '${(c['ab'] as int? ?? 0) > 0 ? 'Here: ${c['hits']} hit(s) in ${c['ab']} at-bat(s) that ended on this pitch at this count.' : 'No at-bat has ended on this pitch at this count yet, so BAA is left blank (—), not 0.'}',
-              null),
-        ]),
-      );
-    }
-
-    return LayoutBuilder(builder: (context, constraints) {
-      // Size every column to fit the available card width exactly (instead
-      // of fixed pixel widths inside a horizontally-scrolling container) so
-      // the whole heat map is visible without scrolling right.
-      // Label column grows with the longest (custom) pitch name, within bounds.
-      final longestPitch = pitchTypes.fold<int>(0, (a, p) => p.length > a ? p.length : a);
-      final labelColWidth = (longestPitch * 6.5 + 12).clamp(46.0, 88.0).toDouble();
-      // Each cell holds three stacked values (".287", "STR%", ...), so a column
-      // needs a minimum width to stay legible. On narrow screens the table keeps
-      // that width and scrolls sideways instead of crushing 12 columns to ~20px.
-      const minColWidth = 54.0;
-      final neededWidth = labelColWidth + counts.length * minColWidth;
-      final tableWidth = constraints.maxWidth >= neededWidth ? constraints.maxWidth : neededWidth;
-      final available = (tableWidth - labelColWidth).clamp(0.0, double.infinity);
-      final colWidth = counts.isEmpty ? available : available / counts.length;
-
-      final table = Table(
-        defaultColumnWidth: FixedColumnWidth(colWidth),
-        columnWidths: {0: FixedColumnWidth(labelColWidth)},
-        border: TableBorder.all(color: AppColors.colBorder, width: 2),
-        children: [
-          TableRow(
-            decoration: const BoxDecoration(color: AppColors.ink),
-            children: [
-              const Padding(
-                padding: EdgeInsets.all(4),
-                child: Text('Pitch', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 9)),
-              ),
-              for (final count in counts)
-                Padding(
-                  padding: const EdgeInsets.all(3),
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Text(count, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 11)),
-                    Text('n=${countTotals[count] ?? 0}',
-                        style: const TextStyle(fontSize: 7.5, color: Colors.white70)),
-                  ]),
-                ),
-            ],
-          ),
-          for (final pt in pitchTypes)
-            TableRow(children: [
-              StatHoldInfo(
-                title: pt.toUpperCase(),
-                description: composeHoldInfo(
-                  what: 'This row shows how this pitch type is used and how it performs at each count.',
-                  colorGuide: pitchTypeColorGuide([pt]),
-                ),
-                child: Container(
-                alignment: Alignment.center,
-                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-                color: AppColors.surfaceAlt,
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Container(width: 7, height: 7, decoration: BoxDecoration(color: AppColors.pitchColor(pt), shape: BoxShape.circle)),
-                  const SizedBox(height: 2),
-                  Text(pt.toUpperCase(),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 9),
-                      textAlign: TextAlign.center),
-                ]),
-                ),
-              ),
-              for (final count in counts) cellWidget(count, pt),
-            ]),
-          TableRow(children: [
-            StatHoldInfo(
-              title: 'ALL pitches',
-              description: composeHoldInfo(
-                what: 'Batting average against at each count with every pitch type combined.\n'
-                    'BAA = hits ÷ official at-bats. An at-bat is credited to the count of its FINAL pitch only; '
-                    'walks, hit-by-pitches and unfinished at-bats are not counted.',
-                colorGuide: swatchLine(AppColors.surfaceAlt, 'Row label: not graded, so it has no cutoffs.'),
-              ),
-              child: Container(
-                alignment: Alignment.center,
-                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-                color: AppColors.surfaceAlt,
-                child: const Text('ALL',
-                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 9), textAlign: TextAlign.center),
-              ),
-            ),
-            for (final count in counts) totalBaaCell(count),
-          ]),
-        ],
-      );
-      if (constraints.maxWidth >= neededWidth) return table;
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SizedBox(width: tableWidth, child: table),
-      );
-    });
-  }
-}
-
-
-/// Recent at-bats, each with its own explainable Sequencing Score — covers
-/// every at-bat length (including ones too short for the opening-sequence
-/// lists) and at-bats still in progress.
-class _AtBatReviewCard extends StatelessWidget {
-  final List<PaScore> atBats; // newest first
-  const _AtBatReviewCard({required this.atBats});
-
-  String _seqText(PaScore pa) {
-    final out = <String>[];
-    for (var i = 0; i < pa.pitches.length; i++) {
-      final p = pa.pitches[i];
-      final (b, st) = pa.countsBefore[i];
-      final t = (p.pitchType ?? '?').toUpperCase();
-      out.add('$b-$st $t ${p.call ?? ''}');
-    }
-    return out.join('  \u2192  ');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final shown = atBats.take(15).toList();
-    return GlowCard(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('At-Bat Review', style: TextStyle(fontWeight: FontWeight.w800)),
-            const Text(
-                'Newest first. Each pitch shows the count it was thrown in. Tap an at-bat for the full score breakdown.',
-                style: TextStyle(fontSize: 10.5, color: AppColors.colMuted, fontStyle: FontStyle.italic)),
-            const SizedBox(height: 6),
-            if (shown.isEmpty)
-              const Text('No at-bats logged yet.', style: TextStyle(color: Colors.grey))
-            else
-              for (final pa in shown)
-                Theme(
-                  data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-                  child: ExpansionTile(
-                    tilePadding: EdgeInsets.zero,
-                    childrenPadding: const EdgeInsets.only(bottom: 8),
-                    expandedCrossAxisAlignment: CrossAxisAlignment.start,
-                    title: Text(
-                      '${pa.team} #${pa.gameNumber}'
-                      '${pa.jersey != null ? '  |  Batter #${pa.jersey}' : ''}'
-                      '${pa.completed ? '  |  ${(pa.finalOutcome ?? '').toUpperCase()}' : '  |  in progress'}',
-                      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-                    ),
-                    subtitle: Text(_seqText(pa),
-                        style: const TextStyle(fontSize: 11.5, color: AppColors.colMuted)),
-                    trailing: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: pa.hasScore ? perfHex('seq_score', pa.score) : AppColors.colBorder,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(pa.hasScore ? pa.score!.toStringAsFixed(0) : 'n/a',
-                          style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800)),
-                    ),
-                    children: [PaBreakdown(pa)],
-                  ),
-                ),
-          ],
-        ),
-      ),
-    );
-  }
 }

@@ -23,11 +23,17 @@ class StatHoldInfo extends StatefulWidget {
   final String? description;
   final Widget child;
 
+  /// Also show the explanation while a mouse pointer hovers over the stat
+  /// (desktop / web). Press-and-hold keeps working everywhere, including
+  /// touch screens, where there is no hover.
+  final bool showOnHover;
+
   const StatHoldInfo({
     super.key,
     required this.title,
     required this.description,
     required this.child,
+    this.showOnHover = false,
   });
 
   @override
@@ -84,6 +90,8 @@ class _StatHoldInfoState extends State<StatHoldInfo> {
     return MouseRegion(
       // Subtle desktop hint that the stat can be held for an explanation.
       cursor: SystemMouseCursors.help,
+      onEnter: widget.showOnHover ? (_) => _show() : null,
+      onExit: widget.showOnHover ? (_) => _hide() : null,
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
         onLongPressStart: (_) => _show(),
