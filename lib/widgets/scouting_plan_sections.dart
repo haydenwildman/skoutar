@@ -19,8 +19,7 @@ class _Section extends StatelessWidget {
   final String title;
   final String? subtitle;
   final List<Widget> children;
-  final bool initiallyExpanded;
-  const _Section({required this.title, this.subtitle, required this.children, this.initiallyExpanded = true});
+  const _Section({required this.title, this.subtitle, required this.children});
 
   @override
   Widget build(BuildContext context) {
@@ -28,7 +27,8 @@ class _Section extends StatelessWidget {
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          initiallyExpanded: initiallyExpanded,
+          // Every section opens expanded; the header still collapses it.
+          initiallyExpanded: true,
           tilePadding: const EdgeInsets.symmetric(horizontal: 12),
           childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
           expandedCrossAxisAlignment: CrossAxisAlignment.start,
@@ -82,6 +82,73 @@ Widget _labeled(String tag, String text, {Conf? conf}) => Padding(
         Row(children: [_Tag(tag), if (conf != null) ...[const SizedBox(width: 6), _ConfChip(conf)]]),
         const SizedBox(height: 2),
         Text(text, style: const TextStyle(fontSize: 12.5, height: 1.25)),
+      ]),
+    );
+
+/// One tag + text line with the tag in a fixed-width column, so every line in a
+/// takeaway aligns. Stacks the tag over the text when there is little room.
+Widget _labeledRow(String tag, String text) => Padding(
+      padding: const EdgeInsets.only(top: 5),
+      child: LayoutBuilder(builder: (context, c) {
+        final body = Text(text, style: const TextStyle(fontSize: 12.5, height: 1.25));
+        if (c.maxWidth < 300) {
+          return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [_Tag(tag), const SizedBox(height: 2), body]);
+        }
+        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          SizedBox(width: 118, child: Align(alignment: Alignment.centerLeft, child: _Tag(tag))),
+          Expanded(child: body),
+        ]);
+      }),
+    );
+
+/// A compact bordered row used for hitter lines and pitch-type facts.
+Widget _compactBox(Widget child) => Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.colBorder),
+      ),
+      child: child,
+    );
+
+/// One hitter on one line: jersey pill, the stat line, then confidence and PA
+/// sample. [withObp] adds OBP (used for the "most dangerous" list).
+Widget _hitterLine(HitterReport h, {bool withObp = false}) => _compactBox(
+      Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+          decoration: BoxDecoration(color: AppColors.ink, borderRadius: BorderRadius.circular(10)),
+          child: Text('#${h.jersey}', style: const TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.w800)),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${_line(h.hits, h.ab)}  •  ${h.bb} BB  •  ${h.ks} K${withObp ? '  •  OBP ${fmtAvg3(h.obp)}' : ''}',
+                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
+            _ConfChip(confFor(h.pa, 2, 6), sample: '${h.pa} PA'),
+          ]),
+        ),
+      ]),
+    );
+
+Widget _hitterGroup(String title, List<HitterReport> hitters, String empty, {bool withObp = false}) =>
+    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _h(title),
+      if (hitters.isEmpty)
+        Text(empty, style: _muted)
+      else
+        for (final h in hitters) _hitterLine(h, withObp: withObp),
+    ]);
+
+/// A labelled fact with its confidence and sample size.
+Widget _factLine(String label, String text, {Conf? conf, String? sample}) => _compactBox(
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppColors.colMuted)),
+        Text(text, style: const TextStyle(fontSize: 12.5, height: 1.25)),
+        if (conf != null) _ConfChip(conf, sample: sample),
       ]),
     );
 
@@ -175,7 +242,7 @@ class PlanOverviewCard extends StatelessWidget {
     final strug = plan.struggled.map((m) => m['h'] as HitterReport).toList();
     return _Section(
       title: 'Game Overview',
-      subtitle: '${plan.team}  •  ${plan.games.length} previous matchup${plan.games.length == 1 ? '' : 's'}',
+      subtitle: '${plan.team}  •  ${plan.games.length} previous matchup${plan.games.length == 1 ? '' : 's'}  •  observed facts from recorded at-bats',
       children: [
         _h('Previous games'),
         if (plan.games.isEmpty)
@@ -196,21 +263,13 @@ class PlanOverviewCard extends StatelessWidget {
             ],
             flex: const [2.2, 1, 1.4, 1, 1, 1],
           ),
-        _h('Most dangerous hitters (by OBP, 2+ PA)'),
-        if (dang.isEmpty)
-          const Text('Not enough plate appearances to rank hitters yet.', style: _muted)
-        else
-          for (final h in dang)
-            _labeled('Observed fact',
-                '#${h.jersey}: ${_line(h.hits, h.ab)}, ${h.bb} BB, ${h.ks} K in ${h.pa} PA (OBP ${fmtAvg3(h.obp)}).',
-                conf: confFor(h.pa, 2, 6)),
-        _h('Hitters who have struggled against you (hitless, 2+ PA)'),
-        if (strug.isEmpty)
-          const Text('No hitless hitters with 2+ plate appearances.', style: _muted)
-        else
-          for (final h in strug)
-            _labeled('Observed fact', '#${h.jersey}: ${_line(h.hits, h.ab)}, ${h.bb} BB, ${h.ks} K in ${h.pa} PA.',
-                conf: confFor(h.pa, 2, 6)),
+        // Threats and strugglers side by side on wide screens, stacked on narrow.
+        _twoUp([
+          _hitterGroup('Most dangerous hitters (by OBP, 2+ PA)', dang,
+              'Not enough plate appearances to rank hitters yet.', withObp: true),
+          _hitterGroup('Hitters who have struggled against you (hitless, 2+ PA)', strug,
+              'No hitless hitters with 2+ plate appearances.'),
+        ], minWidth: 640),
         _h('Your best and worst pitch types vs this team'),
         ..._bestWorst(plan),
         if (plan.unknownJerseyPa > 0 || plan.incompletePa > 0) ...[
@@ -235,19 +294,25 @@ class PlanOverviewCard extends StatelessWidget {
     final out = <Widget>[];
     if (byWhiff.isNotEmpty) {
       final t = byWhiff.first;
-      out.add(_labeled('Observed fact',
-          'Most swings and misses: ${_typeName(t.type)} (${t.whiffs} of ${t.swings} swings, ${pctText(t.whiffPct)}).',
-          conf: confFor(t.swings, GpConfig.minSwings, GpConfig.goodSwings)));
+      out.add(_factLine(
+          'Most swings and misses',
+          '${_typeName(t.type)} (${t.whiffs} of ${t.swings} swings, ${pctText(t.whiffPct)}).',
+          conf: confFor(t.swings, GpConfig.minSwings, GpConfig.goodSwings),
+          sample: '${t.swings} swings'));
     }
     if (byBaa.isNotEmpty) {
       final best = byBaa.last, worst = byBaa.first;
-      out.add(_labeled('Observed fact',
+      final minAb = worst.ab < best.ab ? worst.ab : best.ab;
+      out.add(_factLine(
+          'Batting average against, by pitch type',
           'Most hit: ${_typeName(worst.type)} (${_line(worst.hits, worst.ab)} in at-bats it ended, ${fmtAvg3(worst.baa)}). '
           'Least hit: ${_typeName(best.type)} (${_line(best.hits, best.ab)}, ${fmtAvg3(best.baa)}).',
-          conf: confFor(worst.ab < best.ab ? worst.ab : best.ab, GpConfig.minAb, GpConfig.goodAb)));
+          conf: confFor(minAb, GpConfig.minAb, GpConfig.goodAb),
+          sample: 'smaller sample $minAb AB'));
     }
-    if (out.isEmpty) out.add(const Text('Not enough recorded pitches to rank pitch types.', style: _muted));
-    return out;
+    if (out.isEmpty) return [const Text('Not enough recorded pitches to rank pitch types.', style: _muted)];
+    // Side by side when wide, stacked otherwise.
+    return [_twoUp(out, minWidth: 640)];
   }
 }
 
@@ -291,22 +356,52 @@ class KeyTakeawaysCard extends StatelessWidget {
       'strength' => 'Strength',
       _ => 'Pattern',
     };
+    // Compact card: white with a thin accent edge (color only marks the kind),
+    // kind badge + headline, then confidence and sample. Facts and tendency
+    // come first; the suggested approach sits in its own tinted block so it is
+    // clearly separate from what was observed.
     return Container(
       margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: AppColors.tint,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        border: Border(left: BorderSide(color: color, width: 4)),
+        border: Border.all(color: AppColors.colBorder),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('$n.  $label: ${t.headline}', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13.5, color: color)),
-        const SizedBox(height: 2),
-        _ConfChip(t.conf, sample: t.sample),
-        _labeled('Observed fact', t.fact),
-        if (t.tendency != null) _labeled('Supported tendency', t.tendency!),
-        _labeled('Suggested approach', t.suggestion),
-      ]),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(7),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+          decoration: BoxDecoration(border: Border(left: BorderSide(color: color, width: 3))),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Container(
+                margin: const EdgeInsets.only(top: 1),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: color.withOpacity(0.6)),
+                ),
+                child: Text(label, style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: color)),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text('$n.  ${t.headline}',
+                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13.5, color: AppColors.ink)),
+              ),
+            ]),
+            const SizedBox(height: 2),
+            _ConfChip(t.conf, sample: t.sample),
+            _labeledRow('Observed fact', t.fact),
+            if (t.tendency != null) _labeledRow('Supported tendency', t.tendency!),
+            Container(
+              margin: const EdgeInsets.only(top: 6),
+              padding: const EdgeInsets.fromLTRB(6, 0, 6, 5),
+              decoration: BoxDecoration(color: const Color(0xFFFFF4EC), borderRadius: BorderRadius.circular(6)),
+              child: _labeledRow('Suggested approach', t.suggestion),
+            ),
+          ]),
+        ),
+      ),
     );
   }
 }
@@ -406,7 +501,6 @@ class PitchStrategyCard extends StatelessWidget {
     return _Section(
       title: 'Pitch Selection Strategy',
       subtitle: 'Pitch type, count and recorded outcome only - no velocity, movement or location',
-      initiallyExpanded: false,
       children: [
         _h('Usage and effectiveness'),
         if (plan.teamTypes.isEmpty)
@@ -514,7 +608,6 @@ class LineupBreakdownCard extends StatelessWidget {
     return _Section(
       title: 'Lineup Breakdown',
       subtitle: plan.lineupOrderKnown ? 'In batting order, from the logged lineup spots' : 'Batting order not recorded - sorted by plate appearances',
-      initiallyExpanded: false,
       children: [
         if (plan.hitters.isEmpty)
           const Text('No hitters with a recorded jersey #.', style: _muted),
@@ -591,14 +684,14 @@ class HitterReportsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return _Section(
       title: 'Individual Hitter Reports',
-      subtitle: '${plan.hitters.length} hitter${plan.hitters.length == 1 ? '' : 's'} - tap one to expand',
-      initiallyExpanded: false,
+      subtitle: '${plan.hitters.length} hitter${plan.hitters.length == 1 ? '' : 's'} - tap one to collapse',
       children: [
         if (plan.hitters.isEmpty) const Text('No hitters with a recorded jersey #.', style: _muted),
         for (final h in plan.hitters)
           Theme(
             data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
             child: ExpansionTile(
+              initiallyExpanded: true,
               tilePadding: EdgeInsets.zero,
               childrenPadding: const EdgeInsets.only(bottom: 10),
               expandedCrossAxisAlignment: CrossAxisAlignment.start,
@@ -718,7 +811,6 @@ class SituationalPlanCard extends StatelessWidget {
     return _Section(
       title: 'Situational Game Plan',
       subtitle: 'Unknown means SKOUTAR does not have the data - nothing is guessed',
-      initiallyExpanded: false,
       children: [
         _h('By situation'),
         _table(
@@ -817,7 +909,6 @@ class MatchupReviewCard extends StatelessWidget {
     return _Section(
       title: 'Previous Matchup Review',
       subtitle: 'What happened, in order. Pitch results and at-bat results are shown separately',
-      initiallyExpanded: false,
       children: [
         _h('What worked'),
         if (worked.isEmpty)
@@ -858,6 +949,7 @@ class MatchupReviewCard extends StatelessWidget {
           Theme(
             data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
             child: ExpansionTile(
+              initiallyExpanded: true,
               tilePadding: EdgeInsets.zero,
               childrenPadding: const EdgeInsets.only(bottom: 8),
               expandedCrossAxisAlignment: CrossAxisAlignment.start,

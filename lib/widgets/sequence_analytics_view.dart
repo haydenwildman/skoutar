@@ -274,33 +274,111 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
   bool _showAll = false;
   bool _showAllTransitions = false;
 
-  /// Sequence rows in two columns (rank order runs left to right, then down)
-  /// with a subtle vertical divider between them. Narrow widths stack them in
-  /// one column.
-  Widget _twoColumnRows(List<Widget> rows) => LayoutBuilder(builder: (context, c) {
-        if (rows.length < 2 || c.maxWidth < 900) {
+  /// Rows in two columns (rank order runs left to right, then down) with a
+  /// subtle vertical divider between them. Narrow widths stack them in one
+  /// column. [minWidth] is the content width needed for two columns.
+  ///
+  /// LAYOUT NOTE: this widget lives inside the app shell's vertical
+  /// SingleChildScrollView, so its height is UNBOUNDED. A Row with
+  /// CrossAxisAlignment.stretch tries to force every child to the Row's
+  /// (infinite) height and cannot lay out, which left the heading visible but
+  /// everything under it missing. The Row therefore uses start alignment, and
+  /// the divider is the left column's own right border, so it takes that
+  /// column's real height instead of needing the Row to impose one.
+  Widget _twoColumnRows(List<Widget> rows, {double minWidth = 820}) => LayoutBuilder(builder: (context, c) {
+        if (rows.length < 2 || c.maxWidth < minWidth) {
           return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: rows);
         }
         return Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                for (var i = 0; i < rows.length; i += 2) rows[i],
-              ]),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Container(width: 1.2, color: AppColors.colBorder),
+              child: Container(
+                padding: const EdgeInsets.only(right: 8),
+                decoration: const BoxDecoration(
+                  border: Border(right: BorderSide(color: AppColors.colBorder, width: 1.2)),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  for (var i = 0; i < rows.length; i += 2) rows[i],
+                ]),
+              ),
             ),
             Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                for (var i = 1; i < rows.length; i += 2) rows[i],
-              ]),
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  for (var i = 1; i < rows.length; i += 2) rows[i],
+                ]),
+              ),
             ),
           ],
         );
       });
+
+  /// "Next pitch" usage boxes for one "After X" row, under their own small
+  /// caption. (They used to share the results Wrap behind a thin divider
+  /// widget; when that Wrap broke lines the divider could sit alone in a
+  /// 44px-high run, which showed up as an empty box under the results.)
+  Widget _nextPitchMix(Map<String, int> counts, String ctx) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('Next pitch thrown',
+            style: TextStyle(fontSize: 10, color: AppColors.colMuted, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 4),
+        _mixBoxes(counts, ctx),
+      ]);
+
+  /// One "After X" row: how the NEXT pitch went, then which pitch came next.
+  Widget _afterPitchRow(AfterPitchRow r) {
+    final prev = r.prevType.toUpperCase();
+    return _Row(
+      title: 'After $prev',
+      small: r.next.small,
+      smallText: 'n < ${SeqSampleSize.smallPitches}',
+      children: [
+        _boxes([
+          ..._pitchBoxes(r.next, 'after $prev', nWhat: 'Next pitches thrown right after a $prev.'),
+          _count('In play', '${r.next.inPlay}', 'In play · after $prev',
+              'Next pitches that were put in play. A count, not graded.'),
+        ]),
+        if (r.nextTypes.isNotEmpty) _nextPitchMix(r.nextTypes, 'next pitch after $prev'),
+      ],
+    );
+  }
+
+  /// One A → B transition row.
+  Widget _transitionRow(TransitionRow r) {
+    final t = '${r.from.toUpperCase()} → ${r.to.toUpperCase()}';
+    return _Row(
+      title: t,
+      small: r.n < SeqSampleSize.smallPitches,
+      smallText: 'n < ${SeqSampleSize.smallPitches}',
+      children: [
+        _boxes([
+          _count('n', '${r.n}', 'n · $t', 'Times this transition happened. Not graded: it is the sample size.'),
+          _graded(
+              label: 'Strike%',
+              raw: r.results.strikePct,
+              text: _pct(r.results.strikePct),
+              statKey: 'f_strike',
+              title: 'Strike % · $t',
+              what: _whatStrike),
+          _graded(
+              label: 'Whiff%',
+              raw: r.results.whiffPct,
+              text: _pct(r.results.whiffPct),
+              statKey: 'whiff_pct',
+              title: 'Whiff % · $t',
+              what: _whatWhiff,
+              sub: r.results.swings == 0 ? null : '${r.results.swinging}/${r.results.swings}'),
+          _count('Ended AB', '${r.paEnd.pas}', 'Ended at-bat · $t',
+              'At-bats that ended on the second pitch of this transition. A count, not graded.'),
+          _count('K', '${r.paEnd.k}', 'Strikeouts · $t',
+              'Strikeouts among the at-bats that ended on this transition. A count, not graded.'),
+          _baaBox(r.paEnd, t),
+        ]),
+      ],
+    );
+  }
 
   Widget _sequenceRow(SequenceRow r) {
     final t = r.label;
@@ -441,26 +519,9 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
             Text('No at-bat has two or more pitches in this selection (${d.transitions} pitch-to-pitch pairs).',
                 style: const TextStyle(color: Colors.grey))
           else
-            for (final r in a.afterPitch)
-              _Row(
-                title: 'After ${r.prevType.toUpperCase()}',
-                small: r.next.small,
-                smallText: 'n < ${SeqSampleSize.smallPitches}',
-                children: [
-                  // One row of boxes: the results of the next pitch, then (after
-                  // a thin divider) which pitch came next. No separate lower block.
-                  _boxes([
-                    ..._pitchBoxes(r.next, 'after ${r.prevType.toUpperCase()}',
-                        nWhat: 'Next pitches thrown right after a ${r.prevType.toUpperCase()}.'),
-                    _count('In play', '${r.next.inPlay}', 'In play · after ${r.prevType.toUpperCase()}',
-                        'Next pitches that were put in play. A count, not graded.'),
-                    if (r.nextTypes.isNotEmpty) ...[
-                      Container(width: 1.2, height: 44, color: AppColors.colBorder),
-                      ..._mixBoxList(r.nextTypes, 'next pitch after ${r.prevType.toUpperCase()}'),
-                    ],
-                  ]),
-                ],
-              ),
+            // Two columns when wide enough for each row's boxes to stay on one
+            // line (most-used previous pitch first, left to right, then down).
+            _twoColumnRows([for (final r in a.afterPitch) _afterPitchRow(r)], minWidth: 980),
         ],
       ),
       const SizedBox(height: 8),
@@ -474,38 +535,10 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
           if (!a.hasTransitions)
             const Text('No at-bat has two or more pitches in this selection.', style: TextStyle(color: Colors.grey))
           else
-            for (final r in (_showAllTransitions ? a.transitions : a.transitions.take(15).toList()))
-              _Row(
-                title: '${r.from.toUpperCase()} → ${r.to.toUpperCase()}',
-                small: r.n < SeqSampleSize.smallPitches,
-                smallText: 'n < ${SeqSampleSize.smallPitches}',
-                children: [
-                  _boxes([
-                    _count('n', '${r.n}', 'n · ${r.from.toUpperCase()} → ${r.to.toUpperCase()}',
-                        'Times this transition happened. Not graded: it is the sample size.'),
-                    _graded(
-                        label: 'Strike%',
-                        raw: r.results.strikePct,
-                        text: _pct(r.results.strikePct),
-                        statKey: 'f_strike',
-                        title: 'Strike % · ${r.from.toUpperCase()} → ${r.to.toUpperCase()}',
-                        what: _whatStrike),
-                    _graded(
-                        label: 'Whiff%',
-                        raw: r.results.whiffPct,
-                        text: _pct(r.results.whiffPct),
-                        statKey: 'whiff_pct',
-                        title: 'Whiff % · ${r.from.toUpperCase()} → ${r.to.toUpperCase()}',
-                        what: _whatWhiff,
-                        sub: r.results.swings == 0 ? null : '${r.results.swinging}/${r.results.swings}'),
-                    _count('Ended AB', '${r.paEnd.pas}', 'Ended at-bat · ${r.from.toUpperCase()} → ${r.to.toUpperCase()}',
-                        'At-bats that ended on the second pitch of this transition. A count, not graded.'),
-                    _count('K', '${r.paEnd.k}', 'Strikeouts · ${r.from.toUpperCase()} → ${r.to.toUpperCase()}',
-                        'Strikeouts among the at-bats that ended on this transition. A count, not graded.'),
-                    _baaBox(r.paEnd, '${r.from.toUpperCase()} → ${r.to.toUpperCase()}'),
-                  ]),
-                ],
-              ),
+            _twoColumnRows([
+              for (final r in (_showAllTransitions ? a.transitions : a.transitions.take(15).toList()))
+                _transitionRow(r),
+            ], minWidth: 980),
           if (a.transitions.length > 15)
             Align(
               alignment: Alignment.centerLeft,

@@ -88,6 +88,16 @@ class _OverviewScreenState extends State<OverviewScreen> {
           prominent: true,
         );
 
+    // Row 1: Innings Pitched on its own card, spanning the full content width
+    // (the Column below stretches it). Same bar, label, value and hold-info as
+    // before; it just no longer shares the Key Stats card.
+    final ipCard = GlowCard(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        child: bar('IP', stats.ipDisplay, AppColors.tint),
+      ),
+    );
+
     final keyStatsCard = GlowCard(
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -99,7 +109,6 @@ class _OverviewScreenState extends State<OverviewScreen> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                bar('IP', stats.ipDisplay, AppColors.tint),
                 bar('ERA', stats.era?.toStringAsFixed(2) ?? 'N/A', perfHex('ERA', stats.era), 'ERA', stats.era),
                 bar('WHIP', stats.whip?.toStringAsFixed(3) ?? 'N/A', perfHex('WHIP', stats.whip), 'WHIP', stats.whip),
                 bar('AVG Against', stats.avg?.toStringAsFixed(3) ?? 'N/A', perfHex('AVG', stats.avg), 'AVG', stats.avg),
@@ -186,9 +195,11 @@ class _OverviewScreenState extends State<OverviewScreen> {
             ),
           ),
         ),
-        // Side by side when there is room (each card then fits its own bars
-        // instead of one bar stretching across the whole window); stacked on
-        // narrow screens. Start alignment: the cards size to their content.
+        // Row 1: IP across the whole content width.
+        ipCard,
+        // Row 2: Key Stats | Rate Stats, each about half the width (equal
+        // Expanded). Stacked on narrow screens. Start alignment: the cards
+        // size to their content (this screen scrolls, so height is unbounded).
         ResponsiveRow(
           breakpoint: 720,
           crossAxisAlignment: CrossAxisAlignment.start,
