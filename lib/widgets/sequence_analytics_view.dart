@@ -48,7 +48,6 @@ StatBox _graded({
       title: title,
       description: what,
       colorGuide: statColorGuide(statKey),
-      showOnHover: true,
     );
 
 /// An ungraded box (a count or sample size).
@@ -58,12 +57,11 @@ StatBox _count(String label, String value, String title, String what, {String? s
       sub: sub,
       title: title,
       description: what,
-      showOnHover: true,
     );
 
-/// n / Strike% / Whiff% / Ball% for a set of pitches.
+/// Pitches / Strike% / Whiff% / Ball% for a set of pitches.
 List<Widget> _pitchBoxes(PitchResults r, String ctx, {String nWhat = 'Pitches in this group.'}) => [
-      _count('n', '${r.n}', 'n · $ctx', '$nWhat Not graded: it is the sample size.'),
+      _count('Pitches', '${r.n}', 'Pitches · $ctx', '$nWhat Not graded: it is the sample size.'),
       _graded(
           label: 'Strike%',
           raw: r.strikePct,
@@ -116,13 +114,11 @@ List<Widget> _mixBoxList(Map<String, int> counts, String ctx) {
         sub: '${entries[i].value} of $total',
         accent: AppColors.pitchColor(entries[i].key),
         highlighted: i == 0 && entries.length > 1,
-        width: 74,
         title: '${entries[i].key.toUpperCase()} usage · $ctx',
         description: 'Share of the pitches in this group that were ${entries[i].key.toUpperCase()} '
             '(${entries[i].value} of $total). Usage is not graded: throwing a pitch more or less often is not good or bad '
             'by itself. The outlined box is the most used.',
-        showOnHover: true,
-      ),
+        ),
   ];
 }
 
@@ -333,7 +329,7 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
     return _Row(
       title: 'After $prev',
       small: r.next.small,
-      smallText: 'n < ${SeqSampleSize.smallPitches}',
+      smallText: 'Under ${SeqSampleSize.smallPitches} pitches',
       children: [
         _boxes([
           ..._pitchBoxes(r.next, 'after $prev', nWhat: 'Next pitches thrown right after a $prev.'),
@@ -351,10 +347,11 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
     return _Row(
       title: t,
       small: r.n < SeqSampleSize.smallPitches,
-      smallText: 'n < ${SeqSampleSize.smallPitches}',
+      smallText: 'Under ${SeqSampleSize.smallPitches} times',
       children: [
         _boxes([
-          _count('n', '${r.n}', 'n · $t', 'Times this transition happened. Not graded: it is the sample size.'),
+          _count('Times Thrown', '${r.n}', 'Times thrown · $t',
+              'Times this pitch followed the other in the same at-bat. Not graded: it is the sample size.'),
           _graded(
               label: 'Strike%',
               raw: r.results.strikePct,
@@ -370,9 +367,9 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
               title: 'Whiff % · $t',
               what: _whatWhiff,
               sub: r.results.swings == 0 ? null : '${r.results.swinging}/${r.results.swings}'),
-          _count('Ended AB', '${r.paEnd.pas}', 'Ended at-bat · $t',
+          _count('At-Bats Ended', '${r.paEnd.pas}', 'At-bats ended · $t',
               'At-bats that ended on the second pitch of this transition. A count, not graded.'),
-          _count('K', '${r.paEnd.k}', 'Strikeouts · $t',
+          _count('Strikeouts', '${r.paEnd.k}', 'Strikeouts · $t',
               'Strikeouts among the at-bats that ended on this transition. A count, not graded.'),
           _baaBox(r.paEnd, t),
         ]),
@@ -385,10 +382,10 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
     return _Row(
       title: r.label,
       small: r.small,
-      smallText: 'n < ${SeqSampleSize.smallPas}',
+      smallText: 'Under ${SeqSampleSize.smallPas} plate appearances',
       children: [
         _boxes([
-          _count('n', '${r.n}', 'n · $t',
+          _count('Plate Appearances', '${r.n}', 'Plate appearances · $t',
               'Finished at-bats that opened with exactly this pitch order. Not graded: it is the sample size. '
                   'Under ${SeqSampleSize.smallPas} is a small sample, so read the colors cautiously.'),
           _graded(
@@ -469,7 +466,7 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
             'so a sequence seen 3 times ranks below one with the same results seen 30 times. '
             'It is a ranking aid, not a prediction or proof the sequence caused the result.',
         blurb: 'Opening pitches of finished at-bats, by sequence length. Boxes tint green (favorable) to red (unfavorable); '
-            'plain boxes are counts and are not graded. Hover or press and hold a box for what it means.',
+            'plain boxes are counts and are not graded. Press and hold a box for what it means.',
         children: [
           if (openLen == null)
             Text(
@@ -512,8 +509,8 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
         title: 'Results after each pitch type',
         what: 'For every pitch that was followed by another pitch in the same at-bat: what happened on that NEXT pitch. '
             'Strike% = called + swinging + foul + in play ÷ pitches. Whiff% = swinging strikes ÷ swings (swinging + foul + in play). '
-            'Ball% = balls ÷ pitches. n = next pitches observed. The pitch-type boxes show which pitch came next (usage, not graded).',
-        blurb: 'Grouped by the pitch thrown before. n = next pitches.',
+            'Ball% = balls ÷ pitches. Pitches = next pitches observed. The pitch-type boxes show which pitch came next (usage, not graded).',
+        blurb: 'Grouped by the pitch thrown before. Pitches = next pitches observed.',
         children: [
           if (a.afterPitch.isEmpty)
             Text('No at-bat has two or more pitches in this selection (${d.transitions} pitch-to-pitch pairs).',
@@ -529,8 +526,8 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
         title: 'Pitch-to-pitch transitions',
         what: 'Each row is one pitch type followed directly by another in the same at-bat (A → B). The boxes describe the B pitch: '
             'Strike% and Whiff% (swinging strikes ÷ swings), plus how many at-bats ended on B (with strikeouts and BAA for those). '
-            'n = times that transition happened.',
-        blurb: 'A → B, most frequent first. n = times thrown in that order.',
+            'Times Thrown = times that transition happened.',
+        blurb: 'A → B, most frequent first. Times Thrown = times thrown in that order.',
         children: [
           if (!a.hasTransitions)
             const Text('No at-bat has two or more pitches in this selection.', style: TextStyle(color: Colors.grey))
@@ -572,11 +569,11 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
                 _Row(
                   title: r.label,
                   small: r.small,
-                  smallText: 'n < ${SeqSampleSize.smallPitches}',
+                  smallText: 'Under ${SeqSampleSize.smallPitches} pitches',
                   children: [
                     _boxes([
                       ..._pitchBoxes(r.pitches, r.label, nWhat: 'Pitches thrown to this group of batters.'),
-                      _count('PA ended', '${r.paEnd.pas}', 'At-bats ended · ${r.label}',
+                      _count('At-Bats Ended', '${r.paEnd.pas}', 'At-bats ended · ${r.label}',
                           'At-bats whose final pitch was thrown to this group of batters. A count, not graded.'),
                       _graded(
                           label: 'K%',

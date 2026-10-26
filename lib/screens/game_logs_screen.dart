@@ -22,6 +22,12 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
   String _team = 'All';
   String _gameNum = 'All';
 
+  /// Chart key -> index (into that chart's spots) of the dot currently being
+  /// pressed and held. fl_chart's built-in touch handling also reacts to a
+  /// mouse hovering over the chart, so it is turned off and the tooltip is
+  /// driven only by press-and-hold (mouse button or finger).
+  final Map<String, int> _heldSpot = {};
+
   @override
   Widget build(BuildContext context) {
     final session = context.watch<AppSession>();
@@ -112,6 +118,8 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
 
     Widget lineCard(String title, String key, Color lineColor, String perfStat) {
       final spots = spotsFor(key);
+      final held = _heldSpot[key];
+      final heldSpot = (held != null && held >= 0 && held < spots.length) ? spots[held] : null;
       // Fixed axis bounds so every tick maps to exactly one game index —
       // without this, fl_chart can pick a fractional label interval (e.g.
       // every 0.5 units) and the same opponent name gets drawn twice along
@@ -162,7 +170,7 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
                     // widened it. Now the games share the available width, and
                     // only the opponent LABELS are thinned (every Nth, always
                     // including the latest game) when they would collide.
-                    // Every game keeps its dot; tap/hover shows any game.
+                    // Every game keeps its dot; press and hold shows any game.
                     : LayoutBuilder(builder: (context, constraints) {
                         const leftAxis = 34.0; // matches leftTitles reservedSize
                         const minLabelGap = 24.0; // px between rotated labels
@@ -171,6 +179,23 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
                         final labelStep = (minLabelGap / slotPx).ceil().clamp(1, 1000);
                         final dotRadius = slotPx >= 16 ? 5.0 : (slotPx >= 10 ? 3.5 : 2.5);
                         final dotStroke = slotPx >= 10 ? 2.0 : 1.0;
+                        final barData = LineChartBarData(
+                          spots: spots,
+                          color: lineColor,
+                          barWidth: 3,
+                          dotData: FlDotData(
+                            show: true,
+                            getDotPainter: (spot, percent, bar, index) {
+                              final color = perfHex(perfStat, spot.y);
+                              return FlDotCirclePainter(
+                                radius: dotRadius,
+                                color: color,
+                                strokeWidth: dotStroke,
+                                strokeColor: Colors.white,
+                              );
+                            },
+                          ),
+                        );
                         return SizedBox(
                             width: constraints.maxWidth,
                             height: 240,
@@ -190,26 +215,31 @@ class _GameLogsScreenState extends State<GameLogsScreen> {
                           // chart's own bounds so it can never bleed into the
                           // title above or the card below it.
                           clipData: const FlClipData.all(),
-                          lineBarsData: [
-                            LineChartBarData(
-                              spots: spots,
-                              color: lineColor,
-                              barWidth: 3,
-                              dotData: FlDotData(
-                                show: true,
-                                getDotPainter: (spot, percent, bar, index) {
-                                  final color = perfHex(perfStat, spot.y);
-                                  return FlDotCirclePainter(
-                                    radius: dotRadius,
-                                    color: color,
-                                    strokeWidth: dotStroke,
-                                    strokeColor: Colors.white,
-                                  );
-                                },
-                              ),
-                            ),
-                          ],
+                          lineBarsData: [barData],
+                          showingTooltipIndicators: heldSpot == null
+                              ? const <ShowingTooltipIndicators>[]
+                              : [
+                                  ShowingTooltipIndicators([LineBarSpot(barData, 0, heldSpot)]),
+                                ],
                           lineTouchData: LineTouchData(
+                            // Hover never shows a tooltip: only press-and-hold does.
+                            handleBuiltInTouches: false,
+                            touchSpotThreshold: 24,
+                            touchCallback: (event, response) {
+                              if (event is FlLongPressStart || event is FlLongPressMoveUpdate) {
+                                final hit = response?.lineBarSpots;
+                                if (hit != null && hit.isNotEmpty) {
+                                  final i = hit.first.spotIndex;
+                                  if (_heldSpot[key] != i) setState(() => _heldSpot[key] = i);
+                                }
+                              } else if (event is FlLongPressEnd ||
+                                  event is FlPanEndEvent ||
+                                  event is FlTapUpEvent ||
+                                  event is FlTapCancelEvent ||
+                                  event is FlPanCancelEvent) {
+                                if (_heldSpot.containsKey(key)) setState(() => _heldSpot.remove(key));
+                              }
+                            },
                             touchTooltipData: LineTouchTooltipData(
                               getTooltipColor: (_) => AppColors.ink,
                               tooltipRoundedRadius: 8,
@@ -368,10 +398,10 @@ class _ColumnLabel {
 }
 
 /// Full-name definitions for every abbreviated column in the Full Game Log
-/// table, used both for header tooltips and the legend beneath the title.
+/// table, used both for the press-and-hold header explanations and the legend beneath the title.
 const List<_ColumnLabel> _gameLogColumns = [
   _ColumnLabel('IP', 'Innings Pitched'),
-  _ColumnLabel('PIT', 'Pitches thrown'),
+  _ColumnLabel('P', 'Pitches thrown'),
   _ColumnLabel('PA', 'Plate Appearances faced'),
   _ColumnLabel('AB', 'At-Bats against'),
   _ColumnLabel('H', 'Hits allowed'),
@@ -403,7 +433,7 @@ const List<_ColumnLabel> _gameLogColumns = [
 ];
 
 /// A compact, always-visible key for what each Full Game Log column means —
-/// spelled out so the abbreviations don't require hovering/long-pressing
+/// spelled out so the abbreviations don't require pressing and holding
 /// every header to decode.
 class _GameLogColumnLegend extends StatelessWidget {
   const _GameLogColumnLegend();
@@ -502,7 +532,7 @@ class _GameLogCard extends StatelessWidget {
       plain('ER', row['er'], 'Earned runs allowed.'),
       plain('BB', row['bb'], 'Walks allowed.'),
       plain('K', row['k'], 'Strikeouts.'),
-      plain('PIT', row['pitches'], 'Pitches thrown in this game.'),
+      plain('P', row['pitches'], 'Pitches thrown in this game.'),
       plain('PA', row['pa'], 'Plate appearances faced.'),
       plain('AB', row['ab'], 'At-bats against (plate appearances minus walks and hit-by-pitches).'),
       plain('2B', row['doubles'], 'Doubles allowed.'),

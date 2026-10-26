@@ -986,7 +986,12 @@ class _GameInputScreenState extends State<GameInputScreen> {
         ),
       ),
     );
-    return tooltip == null ? btn : Tooltip(message: tooltip, child: btn);
+    return tooltip == null
+        ? btn
+        : (onLongPress != null
+            // This button already uses press-and-hold for its own action.
+            ? Semantics(label: tooltip, child: btn)
+            : HoldTip(message: tooltip, child: btn));
   }
 
   /// Pitch-type button: left-aligned bold pitch name with a color accent
@@ -1048,7 +1053,12 @@ class _GameInputScreenState extends State<GameInputScreen> {
         ),
       ),
     );
-    return tooltip == null ? btn : Tooltip(message: tooltip, child: btn);
+    return tooltip == null
+        ? btn
+        : (onLongPress != null
+            // This button already uses press-and-hold for its own action.
+            ? Semantics(label: tooltip, child: btn)
+            : HoldTip(message: tooltip, child: btn));
   }
 
   /// Pitch-result ("call") button — deliberately a different visual system
@@ -1121,7 +1131,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
         ),
       ),
     );
-    return tooltip == null ? btn : Tooltip(message: tooltip, child: btn);
+    return tooltip == null ? btn : HoldTip(message: tooltip, child: btn);
   }
 
   /// Ball-In-Play outcome button — uses the exact Spray Chart color for
@@ -1369,12 +1379,11 @@ class _GameInputScreenState extends State<GameInputScreen> {
                       color: AppColors.ink)),
             ),
             const Spacer(),
-            IconButton(
-              tooltip: _stage == _Stage.history ? 'Back to game input' : 'History',
+            HoldTip(message: _stage == _Stage.history ? 'Back to game input' : 'History', child: IconButton(
               onPressed: _toggleHistory,
               icon: Icon(_stage == _Stage.history ? Icons.close : Icons.history,
                   color: AppColors.ink),
-            ),
+            )),
             OutlinedButton.icon(
               onPressed: _handleUndo,
               icon: const Icon(Icons.undo, size: 16),
@@ -1575,7 +1584,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Tooltip(
+            HoldTip(
               message: 'Decrease outs',
               child: InkWell(
                 onTap: session.outs > 0 ? () => session.setOuts(session.outs - 1) : null,
@@ -1613,7 +1622,7 @@ class _GameInputScreenState extends State<GameInputScreen> {
               }),
             ),
             ),
-            Tooltip(
+            HoldTip(
               message: 'Increase outs',
               child: InkWell(
                 onTap: session.outs < 3 ? () => session.setOuts(session.outs + 1) : null,

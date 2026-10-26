@@ -188,6 +188,8 @@ ThemeData buildAppTheme() {
       secondary: AppColors.brandOrange,
     ),
     fontFamily: AppFonts.family,
+    // Teko has no arrow/symbol glyphs; fall back instead of drawing blanks.
+    fontFamilyFallback: const ['Segoe UI Symbol', 'Segoe UI', 'Arial', 'Roboto', 'sans-serif'],
     cardTheme: CardThemeData(
       elevation: 0,
       shape: RoundedRectangleBorder(

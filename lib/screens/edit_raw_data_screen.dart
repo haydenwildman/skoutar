@@ -8,6 +8,7 @@ import '../services/app_session.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glow.dart';
 import '../utils/responsive.dart';
+import '../widgets/stat_hold_info.dart';
 
 /// Direct CSV-style editor — port of the R app's "Edit Raw Data" DT table.
 /// Double-click (double-tap on touch screens) any value to edit just that
@@ -402,30 +403,27 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
 
   Widget _rowActions(BuildContext context, List<PitchEvent> data, int i) {
     return Row(mainAxisSize: MainAxisSize.min, children: [
-      IconButton(
-        tooltip: 'Insert row below this one',
+      HoldTip(message: 'Insert row below this one', child: IconButton(
         visualDensity: VisualDensity.compact,
         constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         padding: EdgeInsets.zero,
         icon: const Icon(Icons.playlist_add, size: 18),
         onPressed: () => _openRowDialog(context, insertIndex: i + 1),
-      ),
-      IconButton(
-        tooltip: 'Edit every field of this row',
+      )),
+      HoldTip(message: 'Edit every field of this row', child: IconButton(
         visualDensity: VisualDensity.compact,
         constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         padding: EdgeInsets.zero,
         icon: const Icon(Icons.edit_outlined, size: 18),
         onPressed: () => _openRowDialog(context, existing: data[i], index: i),
-      ),
-      IconButton(
-        tooltip: 'Delete row',
+      )),
+      HoldTip(message: 'Delete row', child: IconButton(
         visualDensity: VisualDensity.compact,
         constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         padding: EdgeInsets.zero,
         icon: const Icon(Icons.delete_outline, color: AppColors.colError, size: 18),
         onPressed: () => _confirmDeleteRow(context, i),
-      ),
+      )),
     ]);
   }
 
@@ -448,7 +446,7 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
               for (final f in fields)
                 Expanded(
                   flex: f.flex,
-                  child: Tooltip(
+                  child: HoldTip(
                     message: f.label,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -549,12 +547,11 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
       runSpacing: 4,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        IconButton(
-          tooltip: 'Newest rows',
+        HoldTip(message: 'Newest rows', child: IconButton(
           visualDensity: VisualDensity.compact,
           onPressed: _page > 0 ? () => setState(() => _page = 0) : null,
           icon: const Icon(Icons.first_page, size: 20),
-        ),
+        )),
         OutlinedButton.icon(
           onPressed: _page > 0 ? () => setState(() => _page -= 1) : null,
           icon: const Icon(Icons.chevron_left, size: 18),
@@ -569,12 +566,11 @@ class _EditRawDataScreenState extends State<EditRawDataScreen> {
             Icon(Icons.chevron_right, size: 18),
           ]),
         ),
-        IconButton(
-          tooltip: 'Oldest rows',
+        HoldTip(message: 'Oldest rows', child: IconButton(
           visualDensity: VisualDensity.compact,
           onPressed: _page < pages - 1 ? () => setState(() => _page = pages - 1) : null,
           icon: const Icon(Icons.last_page, size: 20),
-        ),
+        )),
       ],
     );
   }
@@ -805,7 +801,7 @@ class _InlineCellState extends State<_InlineCell> {
           }
           return KeyEventResult.ignored;
         },
-        child: Tooltip(
+        child: HoldTip(
           message: _error ?? 'Enter to save · Esc to cancel',
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),

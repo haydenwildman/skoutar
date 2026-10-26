@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'stat_hold_info.dart';
 
 /// Password text field with a show/hide toggle.
 class PasswordField extends StatefulWidget {
@@ -33,11 +34,10 @@ class _PasswordFieldState extends State<PasswordField> {
       textInputAction: widget.textInputAction,
       decoration: InputDecoration(
         labelText: widget.label,
-        suffixIcon: IconButton(
-          tooltip: _obscure ? 'Show password' : 'Hide password',
+        suffixIcon: HoldTip(message: _obscure ? 'Show password' : 'Hide password', child: IconButton(
           icon: Icon(_obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined),
           onPressed: () => setState(() => _obscure = !_obscure),
-        ),
+        )),
       ),
     );
   }

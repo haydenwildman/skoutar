@@ -34,8 +34,7 @@ const String kUnavailable = '—';
 /// * [accent] - thin colored strip on the left edge, used to identify a pitch
 ///   type. It carries no performance meaning.
 /// * [highlighted] - brand-colored border (e.g. the selected or most-used item).
-/// * [description] - when set, hover (if [showOnHover]) or press-and-hold shows
-///   it, followed by the color guide for [colorGuide].
+/// * [description] - when set, press-and-hold shows it, followed by the color guide for [colorGuide].
 class StatBox extends StatelessWidget {
   final String label;
   final String value;
@@ -49,10 +48,13 @@ class StatBox extends StatelessWidget {
   final bool emphasis;
   final double valueSize;
   final double width;
+
+  /// Every box in a grid has the same fixed size, so a long label or a missing
+  /// sub-line never makes one box taller or wider than its neighbours.
+  final double height;
   final String? title;
   final String? description;
   final String? colorGuide;
-  final bool showOnHover;
 
   const StatBox({
     super.key,
@@ -64,11 +66,11 @@ class StatBox extends StatelessWidget {
     this.highlighted = false,
     this.emphasis = false,
     this.valueSize = 14,
-    this.width = 68,
+    this.width = 88,
+    this.height = 66,
     this.title,
     this.description,
     this.colorGuide,
-    this.showOnHover = false,
   });
 
   bool get _unavailable => value == kUnavailable;
@@ -85,7 +87,9 @@ class StatBox extends StatelessWidget {
 
     Widget box = Container(
       width: width,
-      padding: EdgeInsets.fromLTRB(accent == null ? 6 : 9, 5, 6, 5),
+      height: height,
+      alignment: Alignment.center,
+      padding: EdgeInsets.fromLTRB(accent == null ? 6 : 9, 4, 6, 4),
       decoration: BoxDecoration(
         color: fill,
         borderRadius: BorderRadius.circular(8),
@@ -94,15 +98,23 @@ class StatBox extends StatelessWidget {
           width: highlighted ? 2 : (graded ? 2 : 1.2),
         ),
       ),
-      child: Column(
+      // The whole stack scales down if a font ever runs taller than the box,
+      // so a fixed-size box can never overflow.
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           if (label.isNotEmpty)
-            Text(label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 10, color: AppColors.colMuted, fontWeight: FontWeight.w700)),
+            // Scales down instead of wrapping or cutting the label off.
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(label,
+                  maxLines: 1,
+                  softWrap: false,
+                  style: const TextStyle(fontSize: 10, color: AppColors.colMuted, fontWeight: FontWeight.w700)),
+            ),
           FittedBox(
             fit: BoxFit.scaleDown,
             child: Text(value,
@@ -121,6 +133,7 @@ class StatBox extends StatelessWidget {
                   style: const TextStyle(fontSize: 9.5, color: AppColors.colMuted, fontWeight: FontWeight.w600)),
             ),
         ],
+      ),
       ),
     );
 
@@ -142,7 +155,6 @@ class StatBox extends StatelessWidget {
     if (description == null) return box;
     return StatHoldInfo(
       title: title ?? label,
-      showOnHover: showOnHover,
       description: composeHoldInfo(what: description, colorGuide: colorGuide),
       child: box,
     );
@@ -170,20 +182,26 @@ class BoxScoreCol {
 
 /// A compact, aligned box-score table: a header row of short labels over one
 /// row of values. Every cell has the same fixed [cellWidth], so the same
-/// column lines up from one game to the next. Cells never wrap or overlap; if
-/// the table is wider than the space it is given (phones) it scrolls
-/// sideways inside itself.
+/// column lines up from one game to the next. Cells never wrap or overlap.
+///
+/// When the space it is given is narrower than the whole table (phones), the
+/// columns are folded onto as few evenly filled lines as needed, each line a
+/// header row over a value row, so the table fits the screen width with no
+/// sideways scrolling and every column keeps its header and value.
 class BoxScoreTable extends StatelessWidget {
   final List<BoxScoreCol> cols;
   final double cellWidth;
 
   const BoxScoreTable({super.key, required this.cols, this.cellWidth = 54});
 
-  Widget _cell(BoxScoreCol c) {
+  /// Narrowest a folded cell may get; below this a value would be cramped.
+  static const double _minFoldedCell = 40;
+
+  Widget _cell(BoxScoreCol c, double width) {
     final unavailable = c.value == kUnavailable;
     final graded = !unavailable && isGradedTier(c.tier);
     final cell = SizedBox(
-      width: cellWidth,
+      width: width,
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         Container(
           width: double.infinity,
@@ -191,11 +209,14 @@ class BoxScoreTable extends StatelessWidget {
           decoration: const BoxDecoration(
             border: Border(bottom: BorderSide(color: AppColors.colBorder, width: 1.5)),
           ),
-          child: Text(c.label,
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.clip,
-              style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: AppColors.colMuted)),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(c.label,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                softWrap: false,
+                style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: AppColors.colMuted)),
+          ),
         ),
         Container(
           width: double.infinity,
@@ -228,17 +249,37 @@ class BoxScoreTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final row = Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [for (final c in cols) _cell(c)],
-    );
     return LayoutBuilder(builder: (context, constraints) {
       final needed = cols.length * cellWidth;
       if (needed <= constraints.maxWidth) {
-        return Align(alignment: Alignment.centerLeft, child: row);
+        return Align(
+          alignment: Alignment.centerLeft,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [for (final c in cols) _cell(c, cellWidth)],
+          ),
+        );
       }
-      return SingleChildScrollView(scrollDirection: Axis.horizontal, child: row);
+      // Fold onto evenly filled lines that fit the width.
+      final maxPerLine = (constraints.maxWidth / _minFoldedCell).floor().clamp(1, cols.length);
+      final lines = (cols.length / maxPerLine).ceil();
+      final perLine = (cols.length / lines).ceil();
+      final width = (constraints.maxWidth / perLine).floorToDouble().clamp(_minFoldedCell, cellWidth).toDouble();
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var i = 0; i < cols.length; i += perLine) ...[
+            if (i > 0) const SizedBox(height: 6),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final c in cols.skip(i).take(perLine)) _cell(c, width),
+              ],
+            ),
+          ],
+        ],
+      );
     });
   }
 }

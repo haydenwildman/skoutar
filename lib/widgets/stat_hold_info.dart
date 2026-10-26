@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
@@ -17,23 +19,27 @@ import 'glow.dart';
 ///   off the edge of a phone or create horizontal overflow. It opens above
 ///   the stat when there is room, otherwise below.
 ///
-/// When [description] is null the child is returned untouched.
+/// There is NO hover behaviour anywhere: the explanation only appears while
+/// the stat is pressed and held (mouse button or finger).
+///
+/// Alternatives for people who cannot press and hold:
+/// * Keyboard: while the stat (or a control inside it) has focus, holding F1
+///   shows the explanation and releasing it hides it; Escape hides it.
+/// * Screen readers / switch access: the stat exposes a long-press
+///   accessibility action that shows the explanation for a few seconds.
+///
+/// When [description] is null the child is returned untouched. An empty
+/// [description] shows just the [title] (used for short button labels).
 class StatHoldInfo extends StatefulWidget {
   final String title;
   final String? description;
   final Widget child;
-
-  /// Also show the explanation while a mouse pointer hovers over the stat
-  /// (desktop / web). Press-and-hold keeps working everywhere, including
-  /// touch screens, where there is no hover.
-  final bool showOnHover;
 
   const StatHoldInfo({
     super.key,
     required this.title,
     required this.description,
     required this.child,
-    this.showOnHover = false,
   });
 
   @override
@@ -42,6 +48,7 @@ class StatHoldInfo extends StatefulWidget {
 
 class _StatHoldInfoState extends State<StatHoldInfo> {
   OverlayEntry? _entry;
+  Timer? _autoHide;
 
   void _show() {
     if (_entry != null || widget.description == null) return;
@@ -74,8 +81,34 @@ class _StatHoldInfoState extends State<StatHoldInfo> {
   }
 
   void _hide() {
+    _autoHide?.cancel();
+    _autoHide = null;
     _entry?.remove();
     _entry = null;
+  }
+
+  /// Accessibility alternative to press-and-hold: shows the explanation for a
+  /// few seconds (screen-reader / switch-access long-press action).
+  void _showBriefly() {
+    _hide();
+    _show();
+    _autoHide = Timer(const Duration(seconds: 6), _hide);
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event.logicalKey == LogicalKeyboardKey.f1) {
+      if (event is KeyDownEvent) {
+        _show();
+      } else if (event is KeyUpEvent) {
+        _hide();
+      }
+      return KeyEventResult.handled;
+    }
+    if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape && _entry != null) {
+      _hide();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   @override
@@ -87,17 +120,59 @@ class _StatHoldInfoState extends State<StatHoldInfo> {
   @override
   Widget build(BuildContext context) {
     if (widget.description == null) return widget.child;
+    final hasBody = widget.description!.trim().isNotEmpty;
     return MouseRegion(
-      // Subtle desktop hint that the stat can be held for an explanation.
+      // Subtle desktop hint that the stat can be pressed and held. This only
+      // changes the cursor; nothing is shown on hover.
       cursor: SystemMouseCursors.help,
-      onEnter: widget.showOnHover ? (_) => _show() : null,
-      onExit: widget.showOnHover ? (_) => _hide() : null,
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onLongPressStart: (_) => _show(),
-        onLongPressEnd: (_) => _hide(),
-        onLongPressCancel: _hide,
-        child: widget.child,
+      child: Focus(
+        // Never takes focus itself; it only sees key events while a control
+        // inside it is focused (keyboard alternative to press-and-hold).
+        canRequestFocus: false,
+        skipTraversal: true,
+        onKeyEvent: _onKey,
+        onFocusChange: (focused) {
+          if (!focused) _hide();
+        },
+        child: Semantics(
+          container: false,
+          hint: hasBody ? 'Press and hold for an explanation' : null,
+          onLongPress: _showBriefly,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onLongPressStart: (_) => _show(),
+            onLongPressEnd: (_) => _hide(),
+            onLongPressCancel: _hide,
+            child: widget.child,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A short label shown while its control is pressed and held. Replaces every
+/// hover-only `Tooltip` / `tooltip:` in the app, so no explanation depends on
+/// a mouse pointer. Also exposes [message] as the control's accessibility
+/// label.
+class HoldTip extends StatelessWidget {
+  final String message;
+  final Widget child;
+  const HoldTip({super.key, required this.message, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    if (message.trim().isEmpty) return child;
+    // A short label is shown as a title; a sentence (or several lines) is
+    // shown as the body text so it never reads as one huge bold heading.
+    final nl = message.indexOf('\n');
+    final short = nl < 0 && message.length <= 36;
+    return Semantics(
+      label: message.replaceAll('\n', ' '),
+      child: StatHoldInfo(
+        title: short ? message : '',
+        description: short ? '' : message,
+        child: child,
       ),
     );
   }
@@ -222,17 +297,20 @@ class _StatInfoPopup extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          fontFamily: AppFonts.family,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.ink,
+                      if (title.isNotEmpty)
+                        Text(
+                          title,
+                          style: const TextStyle(
+                            fontFamily: AppFonts.family,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.ink,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      ..._body(description),
+                      if (description.trim().isNotEmpty) ...[
+                        if (title.isNotEmpty) const SizedBox(height: 4),
+                        ..._body(description),
+                      ],
                     ],
                   ),
                 ),

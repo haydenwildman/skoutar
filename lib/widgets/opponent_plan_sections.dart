@@ -62,12 +62,12 @@ Widget _divider() => const Padding(
 Widget _muted(String text) =>
     Text(text, style: const TextStyle(fontSize: 12, color: AppColors.colMuted));
 
-/// "n=6 · Low confidence" label. Press and hold explains the grading.
+/// "Pitches: 6 · Low confidence" label. Press and hold explains the grading.
 class _Conf extends StatelessWidget {
   final int n;
   final Confidence c;
   final String unit;
-  const _Conf(this.n, this.c, {this.unit = ''});
+  const _Conf(this.n, this.c, {this.unit = 'Sample Size'});
 
   @override
   Widget build(BuildContext context) {
@@ -79,7 +79,7 @@ class _Conf extends StatelessWidget {
       title: 'Sample size',
       description: composeHoldInfo(
         what: 'How much data sits behind this number. Small samples can look dramatic by chance, '
-            'so each stat shows its sample (n) and a grade.\n\n'
+            'so each stat shows its sample size (the number of pitches or plate appearances behind it) and a grade.\n\n'
             'Pitch counts (pitches or swings): under 3 = insufficient, 3-7 = low, 8-19 = moderate, 20+ = solid.\n'
             'Plate appearances / at-bats: under 2 = insufficient, 2-4 = low, 5-11 = moderate, 12+ = solid.',
         colorGuide: [
@@ -94,7 +94,7 @@ class _Conf extends StatelessWidget {
           border: Border.all(color: color, width: 1.2),
           borderRadius: BorderRadius.circular(10),
         ),
-        child: Text('n=$n$unit · ${c.label}',
+        child: Text('$unit: $n · ${c.label}',
             style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color)),
       ),
     );
@@ -204,15 +204,19 @@ Widget _lineChips(SituationLine l) => Wrap(spacing: 6, runSpacing: 6, children: 
           statKey: 'BB_pct', what: 'Walks ÷ plate appearances (${l.bb} BB).'),
     ]);
 
-/// Pitch-type table row: type, sample, rates. Everything shows its n.
+/// Pitch-type table row: type, sample, rates. Everything shows its sample size.
 Widget _pitchRow(PitchLine l, {bool showAb = true}) {
   final type = l.type.toUpperCase();
   const color = AppColors.brandOrangeMid;
+  // Each cell scales its text down instead of overflowing its column.
   Widget cell(String top, String bottom) => Expanded(
-        child: Column(children: [
-          Text(top, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
-          Text(bottom, style: const TextStyle(fontSize: 9.5, color: AppColors.colMuted)),
-        ]),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Column(children: [
+            Text(top, maxLines: 1, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
+            Text(bottom, maxLines: 1, style: const TextStyle(fontSize: 9.5, color: AppColors.colMuted)),
+          ]),
+        ),
       );
   return Padding(
     padding: const EdgeInsets.symmetric(vertical: 4),
@@ -227,7 +231,7 @@ Widget _pitchRow(PitchLine l, {bool showAb = true}) {
       ),
       cell('${l.n}', 'pitches'),
       cell(_p(l.strikePct), 'strike'),
-      cell(_p(l.whiffPct), 'whiff (${l.swings} sw)'),
+      cell(_p(l.whiffPct), 'whiff (${l.swings} swings)'),
       if (showAb) cell(l.abEnded > 0 ? _a(l.avg) : '—', 'AVG (${l.hitsEnded}/${l.abEnded})'),
     ]),
   );
@@ -339,9 +343,9 @@ class OpponentTeamTendencies extends StatelessWidget {
                 ? Text('${b.label}: no pitches recorded.', style: const TextStyle(fontSize: 12, color: AppColors.colMuted))
                 : Wrap(spacing: 8, runSpacing: 3, crossAxisAlignment: WrapCrossAlignment.center, children: [
                     Text(b.label, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
-                    Text('swing ${_p(b.swingPct)} · whiff ${_p(b.whiffPct)} (${b.swings} sw) · took ${b.takes}',
+                    Text('swing ${_p(b.swingPct)} · whiff ${_p(b.whiffPct)} (${b.swings} swings) · took ${b.takes}',
                         style: const TextStyle(fontSize: 12)),
-                    _Conf(b.n, b.confidence, unit: ' pitches'),
+                    _Conf(b.n, b.confidence, unit: 'Pitches'),
                   ]),
           ),
       ],
@@ -374,7 +378,7 @@ class OpponentPitchStrategy extends StatelessWidget {
               Text('usage ${_p(_share(l.n, total))} · K ${l.kEnded} · XBH ${l.xbhEnded} · '
                   'in-play outs ${l.bipOuts}, hits ${l.bipHits}',
                   style: const TextStyle(fontSize: 10.5, color: AppColors.colMuted)),
-              _Conf(l.n, l.pitchConf, unit: ' pitches'),
+              _Conf(l.n, l.pitchConf, unit: 'Pitches'),
             ]),
           ),
         ],
@@ -410,7 +414,7 @@ class OpponentPitchStrategy extends StatelessWidget {
             for (final l in lines)
               Row(mainAxisSize: MainAxisSize.min, children: [
                 Text(
-                    '${l.type.toUpperCase()} ${metricIsWhiff ? 'whiff ${_p(l.whiffPct)} (${l.swings} sw)' : 'strike ${_p(l.strikePct)}'} · ${l.n}',
+                    '${l.type.toUpperCase()} ${metricIsWhiff ? 'whiff ${_p(l.whiffPct)} (${l.swings} swings)' : 'strike ${_p(l.strikePct)}'} · Pitches: ${l.n}',
                     style: const TextStyle(fontSize: 11.5)),
                 const SizedBox(width: 4),
                 Text('(${l.pitchConf.label.toLowerCase()})',
@@ -478,7 +482,7 @@ class OpponentLineupBreakdown extends StatelessWidget {
               const SizedBox(height: 2),
               Text(h.approach, style: const TextStyle(fontSize: 11.5, color: AppColors.colMuted)),
               const SizedBox(height: 3),
-              _Conf(l.pa, l.confidence, unit: ' PA'),
+              _Conf(l.pa, l.confidence, unit: 'Plate Appearances'),
             ]),
           ),
           const Icon(Icons.chevron_right, size: 18, color: AppColors.colMuted),
@@ -567,7 +571,7 @@ class HitterCard extends StatelessWidget {
             child: Wrap(spacing: 8, runSpacing: 3, crossAxisAlignment: WrapCrossAlignment.center, children: [
               Text('${l.h}-for-${l.ab}, ${l.k} K, ${l.bb} BB · ${l.pa} PA',
                   style: const TextStyle(fontSize: 11.5)),
-              _Conf(l.pa, l.confidence, unit: ' PA'),
+              _Conf(l.pa, l.confidence, unit: 'Plate Appearances'),
             ]),
           ),
           children: [
@@ -589,7 +593,7 @@ class HitterCard extends StatelessWidget {
                   child: Wrap(spacing: 8, runSpacing: 2, crossAxisAlignment: WrapCrossAlignment.center, children: [
                     Text('called strikes ${p.called} · swing ${_p(p.swingPct)} · in-play outs ${p.bipOuts}, hits ${p.bipHits}',
                         style: const TextStyle(fontSize: 10.5, color: AppColors.colMuted)),
-                    _Conf(p.n, p.pitchConf, unit: ' pitches'),
+                    _Conf(p.n, p.pitchConf, unit: 'Pitches'),
                   ]),
                 ),
               ],
@@ -603,9 +607,9 @@ class HitterCard extends StatelessWidget {
                     ? Text('${b.label}: no pitches.', style: const TextStyle(fontSize: 11.5, color: AppColors.colMuted))
                     : Wrap(spacing: 8, runSpacing: 2, crossAxisAlignment: WrapCrossAlignment.center, children: [
                         Text(b.label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
-                        Text('swing ${_p(b.swingPct)} (${b.swings}/${b.n}) · whiff ${_p(b.whiffPct)}',
+                        Text('swing ${_p(b.swingPct)} (${b.swings} of ${b.n} pitches) · whiff ${_p(b.whiffPct)}',
                             style: const TextStyle(fontSize: 11.5)),
-                        _Conf(b.n, b.confidence, unit: ' pitches'),
+                        _Conf(b.n, b.confidence, unit: 'Pitches'),
                       ]),
               ),
             const SizedBox(height: 4),
@@ -640,7 +644,7 @@ class OpponentSituational extends StatelessWidget {
           else ...[
             _lineChips(l),
             const SizedBox(height: 4),
-            _Conf(l.pa, l.confidence, unit: ' PA'),
+            _Conf(l.pa, l.confidence, unit: 'Plate Appearances'),
           ],
           if (note != null) Padding(padding: const EdgeInsets.only(top: 4), child: _muted(note)),
         ]),
@@ -679,9 +683,9 @@ class OpponentSituational extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 2),
               child: Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
-                Text('${l.type.toUpperCase()}: whiff ${_p(l.whiffPct)} (${l.swings} sw) · K ${l.kEnded} · hits allowed ${l.hitsEnded}',
+                Text('${l.type.toUpperCase()}: whiff ${_p(l.whiffPct)} (${l.swings} swings) · K ${l.kEnded} · hits allowed ${l.hitsEnded}',
                     style: const TextStyle(fontSize: 12)),
-                _Conf(l.n, l.pitchConf, unit: ' pitches'),
+                _Conf(l.n, l.pitchConf, unit: 'Pitches'),
               ]),
             ),
         ],
@@ -698,7 +702,7 @@ class OpponentSituational extends StatelessWidget {
               child: Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
                 Text('${l.type.toUpperCase()}: strike ${_p(l.strikePct)} · hits allowed ${l.hitsEnded}',
                     style: const TextStyle(fontSize: 12)),
-                _Conf(l.n, l.pitchConf, unit: ' pitches'),
+                _Conf(l.n, l.pitchConf, unit: 'Pitches'),
               ]),
             ),
         ],
@@ -765,7 +769,7 @@ class OpponentMatchupReview extends StatelessWidget {
             child: Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
               Text('${l.label}: ${l.pa == 0 ? "no data" : "${l.h}-for-${l.ab}, OBP ${_a(l.obp)}, ${l.k} K"}',
                   style: const TextStyle(fontSize: 12)),
-              _Conf(l.pa, l.confidence, unit: ' PA'),
+              _Conf(l.pa, l.confidence, unit: 'Plate Appearances'),
             ]),
           ),
         const SizedBox(height: 2),

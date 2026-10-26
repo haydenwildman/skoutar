@@ -5,7 +5,7 @@ import 'scouting_report_data.dart';
 import 'sequence_scoring.dart' show SequenceScoring;
 import 'stats_service.dart' show perfHex, swingPctColor;
 
-/// Layout-agnostic content of the two-page Scouting Report, built ONCE from
+/// Layout-agnostic content of the Scouting Report (team page plus one card per hitter), built ONCE from
 /// [ScoutingReportData] (and its [ScoutingGamePlan]) and drawn by both the
 /// on-screen report and the PDF export, so the two can never drift apart.
 ///
@@ -54,7 +54,7 @@ class SheetFinding {
   final String body;
   final String tag; // 'Observed' | 'Tendency' | 'Suggested' | 'Caution'
   final String conf; // short confidence label
-  final String sample; // e.g. "n=5 PA"
+  final String sample; // e.g. "Plate Appearances: 5"
   const SheetFinding(this.headline, this.body, this.tag, this.conf, this.sample);
 }
 
@@ -201,9 +201,9 @@ class ScoutingSheet {
       ]);
     }
     final pitches = SheetTable(
-      ['Pitch', 'Pit', 'Use', 'Strike', 'Swing', 'Sw', 'Whiff', 'H-AB', 'AVG', 'XBH', 'K', 'BB'],
+      ['Pitch', 'P', 'Use', 'Strike', 'Swing', 'Sw', 'Whiff', 'H-AB', 'AVG', 'XBH', 'K', 'BB'],
       pitchRows,
-      [1.5, 1, 1, 1.2, 1.2, 1, 1.2, 1.2, 1.3, 1, 0.9, 0.9],
+      [1.5, 1, 1, 1.3, 1.3, 1, 1.4, 1.3, 1.4, 1, 0.9, 0.9],
     );
 
     // Team count tendencies (same exclusive buckets as the hitter cards).
@@ -283,11 +283,11 @@ class ScoutingSheet {
     // Data-quality cautions that are always true of the recorded data.
     if (plan.incompletePa > 0) {
       cautions.add(SheetFinding('Unfinished at-bats', '${plan.incompletePa} plate appearance(s) have no recorded result and are excluded from AVG/OBP/SLG.',
-          'Caution', 'n/a', 'n=${plan.incompletePa} PA'));
+          'Caution', 'n/a', 'Plate Appearances: ${plan.incompletePa}'));
     }
     if (plan.unknownJerseyPa > 0) {
       cautions.add(SheetFinding('No jersey recorded', '${plan.unknownJerseyPa} completed PA(s) have no jersey number, so they are in team totals but on no hitter card.',
-          'Caution', 'n/a', 'n=${plan.unknownJerseyPa} PA'));
+          'Caution', 'n/a', 'Plate Appearances: ${plan.unknownJerseyPa}'));
     }
     cautions.add(const SheetFinding('Not recorded',
         'Base runners, pitch location and velocity are not tracked, so no runner or location advice is given.',
@@ -318,7 +318,7 @@ class ScoutingSheet {
   static HitterCard _card(HitterReport h) {
     final okAb = h.ab >= GpConfig.minAb;
     SheetMetric box(String label, String stat, double? v) => SheetMetric(
-        label, v == null ? '—' : fmtAvg3(v), okAb ? '' : 'n<${GpConfig.minAb} AB', _tier(stat, v, ok: okAb));
+        label, v == null ? '—' : fmtAvg3(v), okAb ? '' : 'Under ${GpConfig.minAb} At-Bats', _tier(stat, v, ok: okAb));
 
     final total = h.totalPitches;
     final tRows = <List<SheetCell>>[];
@@ -347,7 +347,7 @@ class ScoutingSheet {
       avg: box('AVG', 'batter_AVG', h.avg),
       obp: box('OBP', 'batter_OBP', h.obp),
       slg: box('SLG', 'batter_SLG', h.slg),
-      pitchTable: SheetTable(['Pitch', 'Pit', 'Use', 'H-AB', 'AVG', 'Wh/Sw', 'Whiff'], tRows,
+      pitchTable: SheetTable(['Pitch', 'P', 'Use', 'H-AB', 'AVG', 'Wh/Sw', 'Whiff'], tRows,
           [1.5, 1, 1, 1.2, 1.3, 1.3, 1.2]),
       countTable: SheetTable(_countHeaders, _countRows(h.byCount, h), _countFlex),
       notes: _notes(h),
@@ -396,8 +396,8 @@ class ScoutingSheet {
 
   // ───────────────────────── count tables ─────────────────────────
 
-  static const List<String> _countHeaders = ['Count', 'Pit', 'Sw', 'Whiff', 'PA', 'H-AB', 'K', 'BB', 'AVG', 'Pitches used'];
-  static const List<double> _countFlex = [1.9, 0.75, 0.75, 1.05, 0.75, 1.05, 0.65, 0.65, 1.15, 4.2];
+  static const List<String> _countHeaders = ['Count', 'P', 'Sw', 'Whiff', 'PA', 'H-AB', 'K', 'BB', 'AVG', 'Pitches used'];
+  static const List<double> _countFlex = [1.9, 0.8, 0.8, 1.4, 0.8, 1.15, 0.7, 0.7, 1.2, 3.8];
 
   /// Rows for the exclusive buckets (0-0, pitcher ahead, even, hitter ahead)
   /// then the two-strike row, which is drawn as an overlapping subset of the

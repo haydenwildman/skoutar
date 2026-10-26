@@ -7,6 +7,7 @@ import '../theme/app_theme.dart';
 import '../widgets/auth_shell.dart';
 import '../widgets/pitcher_form.dart';
 import 'account_dialog.dart';
+import '../widgets/stat_hold_info.dart';
 
 /// Opened from the sidebar name chip: pick which pitcher is active, add a
 /// pitcher (if the plan has room), edit or remove pitchers.
@@ -214,14 +215,14 @@ class _PitcherTile extends StatelessWidget {
               fontSize: 12,
               color: pitcher.isComplete ? AppColors.colMuted : AppColors.colError),
         ),
-        trailing: PopupMenuButton<String>(
-          tooltip: 'Pitcher options',
+        trailing: HoldTip(message: 'Pitcher options', child: PopupMenuButton<String>(
+          tooltip: '', // no hover tooltip; the HoldTip above explains it on press-and-hold
           onSelected: (v) => v == 'edit' ? onEdit() : onRemove(),
           itemBuilder: (_) => [
             const PopupMenuItem(value: 'edit', child: Text('Edit profile')),
             if (canRemove) const PopupMenuItem(value: 'remove', child: Text('Remove')),
           ],
-        ),
+        )),
       ),
     );
   }

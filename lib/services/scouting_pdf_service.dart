@@ -28,8 +28,9 @@ class _C {
   static PdfColor solid(Color tier) => PdfColor.fromInt(tier.value);
 }
 
-/// How page 2 was laid out; the on-screen report reads this to tell the user
-/// exactly what the PDF contains.
+/// How the hitter cards were laid out. Every hitter now gets their own card
+/// (one per page in the PDF), so [fullCards] always equals [totalHitters] and
+/// there is never a roster-only remainder.
 class ScoutingPdfFit {
   final int totalHitters;
   final int fullCards;
@@ -41,13 +42,12 @@ class ScoutingPdfFit {
   bool get allFit => rosterRows == 0;
 }
 
-/// Builds the two-page US Letter Scouting Report PDF.
+/// Builds the US Letter Scouting Report PDF.
 ///
-/// Page 1 = team overview, page 2 = hitter scouting cards. Both pages are
-/// fixed `pw.Page`s (never a MultiPage), so the document can only ever be two
-/// pages. Every row has a fixed height so the layout is deterministic, and
-/// anything that cannot fit legibly is stated on the page instead of being
-/// shrunk or dropped silently.
+/// Page 1 = team overview. Then ONE page per hitter, each a full individual
+/// scouting card with the same design, so the page count is 1 + the number of
+/// eligible hitters (never hard-coded) and each card starts on its own page.
+/// Every row has a fixed height so the layout is deterministic.
 class ScoutingPdfService {
   // ── page geometry (points; 72 pt = 1 in) ───────────────────────────
   static const double _mL = 24, _mT = 20;
@@ -102,13 +102,24 @@ class ScoutingPdfService {
     doc.addPage(pw.Page(
       pageFormat: PdfPageFormat.letter,
       margin: margin,
-      build: (ctx) => _pageShell(logo, sheet, 1, _page1(sheet)),
+      build: (ctx) => _pageShell(logo, sheet, 1, 1 + (sheet.cards.isEmpty ? 1 : sheet.cards.length), _page1(sheet)),
     ));
-    doc.addPage(pw.Page(
-      pageFormat: PdfPageFormat.letter,
-      margin: margin,
-      build: (ctx) => _pageShell(logo, sheet, 2, _page2(sheet, fit)),
-    ));
+    final pageCount = 1 + sheet.cards.length;
+    if (sheet.cards.isEmpty) {
+      doc.addPage(pw.Page(
+        pageFormat: PdfPageFormat.letter,
+        margin: margin,
+        build: (ctx) => _pageShell(logo, sheet, 2, 2, _noCards()),
+      ));
+    }
+    for (var i = 0; i < sheet.cards.length; i++) {
+      final card = sheet.cards[i];
+      doc.addPage(pw.Page(
+        pageFormat: PdfPageFormat.letter,
+        margin: margin,
+        build: (ctx) => _pageShell(logo, sheet, i + 2, pageCount, _hitterPage(card)),
+      ));
+    }
     return doc.save();
   }
 
@@ -116,7 +127,8 @@ class ScoutingPdfService {
 
   static pw.Widget _t(String s, double size,
       {bool bold = false, PdfColor? color, pw.TextAlign? align}) {
-    return pw.Text(s,
+    // The Teko font has no arrow glyph; use plain ">" so nothing prints blank.
+    return pw.Text(s.replaceAll('→', '>'),
         textAlign: align,
         style: pw.TextStyle(
             fontSize: size,
@@ -139,13 +151,13 @@ class ScoutingPdfService {
     return n < 1 ? 1 : n;
   }
 
-  static pw.Widget _pageShell(pw.MemoryImage? logo, ScoutingSheet sh, int page, pw.Widget body) {
+  static pw.Widget _pageShell(pw.MemoryImage? logo, ScoutingSheet sh, int page, int pages, pw.Widget body) {
     final r = sh.r;
     final threat = r.threatLevel == 'high'
         ? _C.perfPoor
         : (r.threatLevel == 'medium' ? _C.perfAverage : _C.perfExcellent);
     final threatText = r.threatLevel == 'medium' ? _C.text : PdfColors.white;
-    final title = page == 1 ? 'SCOUTING REPORT: ${r.team.toUpperCase()}' : 'HITTER SCOUTING CARDS: ${r.team.toUpperCase()}';
+    final title = page == 1 ? 'SCOUTING REPORT: ${r.team.toUpperCase()}' : 'HITTER SCOUTING CARD: ${r.team.toUpperCase()}';
     final today = DateTime.now().toString().split(' ').first;
     return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
       pw.SizedBox(
@@ -157,7 +169,7 @@ class ScoutingPdfService {
               pw.SizedBox(width: 6),
             ],
             pw.Expanded(child: _t(title, 15, bold: true, color: _C.ink)),
-            _t('${r.gamesFaced} game${r.gamesFaced == 1 ? '' : 's'} · $today · Page $page of 2', 7.5, color: _C.muted),
+            _t('${r.gamesFaced} game${r.gamesFaced == 1 ? '' : 's'} · $today · Page $page of $pages', 7.5, color: _C.muted),
             pw.SizedBox(width: 8),
             pw.Container(
               padding: const pw.EdgeInsets.symmetric(horizontal: 7, vertical: 1),
@@ -294,7 +306,7 @@ class ScoutingPdfService {
             note: 'Use = share of all pitches. Strike/Swing/Whiff are pitch-level rates; H-AB, AVG, XBH, K, BB count only at-bats that ENDED on that pitch.'),
         _table(s.pitches, _w, empty: 'No pitch data recorded'),
         pw.SizedBox(height: 1),
-        _t('Pit = pitches thrown · Sw = swings (Whiff % = misses ÷ swings). Different measures: usage, strike rate and whiff rate are not interchangeable with AVG against.',
+        _t('P = pitches thrown · Sw = swings (Whiff % = misses ÷ swings). Different measures: usage, strike rate and whiff rate are not interchangeable with AVG against.',
             6, color: _C.muted),
       ])),
       pw.SizedBox(height: _gap),
@@ -314,7 +326,7 @@ class ScoutingPdfService {
           _heading('Most dangerous hitters', width: half, note: 'ranked by OBP, min. 2 PA, top 5'),
           _table(s.dangerous, half, empty: 'Need 2+ PA from a hitter'),
           pw.SizedBox(height: 1),
-          _t('Small samples: a high OBP over 2–4 PA is a note, not proof. Full cards on page 2.', 6, color: _C.muted),
+          _t('Small samples: a high OBP over 2–4 PA is a note, not proof. Each hitter has their own card on the pages that follow.', 6, color: _C.muted),
         ])),
       ])),
       pw.SizedBox(height: _gap),
@@ -324,7 +336,7 @@ class ScoutingPdfService {
           _heading('Team results by count', width: half, note: 'Ahead/Even/Behind are exclusive'),
           _table(s.teamCounts, half, empty: 'No count data recorded'),
           pw.SizedBox(height: 1),
-          _t('Pit/Sw/Whiff count every pitch thrown in that count; PA, H-AB, K, BB count at-bats that ENDED there. * overlaps rows above.',
+          _t('P/Sw/Whiff count every pitch thrown in that count; PA, H-AB, K, BB count at-bats that ENDED there. * overlaps rows above.',
               6, color: _C.muted),
         ])),
         pw.SizedBox(width: _gap),
@@ -454,231 +466,112 @@ class ScoutingPdfService {
     return '${s.substring(0, maxChars - 1).trimRight()}…';
   }
 
-  // ───────────────────────── page 2 ─────────────────────────
+  // ───────────────────── hitter pages (one per hitter) ─────────────────────
 
   /// Decides which hitters get a full card; the rest are listed in a compact
   /// roster table (jersey, hand, PA, H-AB, AVG/OBP/SLG) so no hitter vanishes
   /// from the printout. Hitters with the most plate appearances get the cards.
   static ScoutingPdfFit fitFor(List<HitterCard> cards) {
     final n = cards.length;
-    if (n == 0) return const ScoutingPdfFit(0, 0, 0, 2, 0, []);
-    final order = [for (var i = 0; i < n; i++) i]
-      ..sort((a, b) {
-        final c = cards[b].pa.compareTo(cards[a].pa);
-        return c != 0 ? c : a.compareTo(b);
-      });
-    final avail = _contentH - _headerH - _footerH - _secH - 18 - _gap;
-    var tallest = 0.0;
-    for (final c in cards) {
-      final h = _cardHeightOf(c);
-      if (h > tallest) tallest = h;
-    }
-    for (var k = n; k >= 0; k--) {
-      final idx = order.take(k).toList()..sort();
-      final cardsH = _rowsHeight(cards, idx);
-      final stubs = n - k;
-      final stubH = stubs == 0 ? 0.0 : _gap + _secH + _tableH(stubs, _rowCard, _headCard) + 12;
-      if (cardsH + stubH <= avail) return ScoutingPdfFit(n, k, stubs, 2, tallest, idx);
-    }
-    return ScoutingPdfFit(n, 0, n, 2, tallest, const []);
+    return ScoutingPdfFit(n, n, 0, 1, 0, [for (var i = 0; i < n; i++) i]);
   }
 
-  /// Total height of the card rows (two cards per row, row height = taller
-  /// of the pair) for the hitters at [idx], including the gaps between rows.
-  static double _rowsHeight(List<HitterCard> cards, List<int> idx) {
-    var total = 0.0;
-    for (var i = 0; i < idx.length; i += 2) {
-      var m = _cardHeightOf(cards[idx[i]]);
-      if (i + 1 < idx.length) {
-        final b = _cardHeightOf(cards[idx[i + 1]]);
-        if (b > m) m = b;
-      }
-      total += m;
-      if (i + 2 < idx.length) total += 4;
-    }
-    return total;
-  }
-
-  /// Height one card needs for ITS content: 5 count rows always, one pitch row
-  /// per recorded pitch type (capped), and its own note lines.
-  static double _cardHeightOf(HitterCard c) {
-    var pitchRows = c.pitchTable.rows.length;
-    if (pitchRows < 1) pitchRows = 1;
-    if (pitchRows > _maxPitchRows) pitchRows = _maxPitchRows;
-    const cw = (_w - _gap) / 2;
-    var notesH = 0.0;
-    for (final n in c.notes) {
-      notesH += _noteLines(n, cw - 8) * (_fCard * 1.433);
-    }
-    return 16 + 2 + 17 + 2 + _tableH(pitchRows, _rowCard, _headCard) + 2 + _tableH(5, _rowCard, _headCard) + 2 + notesH + 8;
-  }
-
-  static int _noteLines(SheetNote n, double width) {
-    final perLine = (width / (_fCard * _teko)).floor();
-    final prefix = '${n.label} · ${n.tag} · ${n.conf}: ';
-    final est = prefix.length * (_tekoB / _teko) + _clipNote(n, width).length;
-    return est <= perLine ? 1 : 2;
-  }
-
-  /// Note text shortened (with an ellipsis) so prefix + text fit in two lines.
-  static String _clipNote(SheetNote n, double width) {
-    final perLine = (width / (_fCard * _teko)).floor();
-    final prefix = '${n.label} · ${n.tag} · ${n.conf}: ';
-    final cap = perLine * 2 - (prefix.length * (_tekoB / _teko)).ceil() - 4;
-    return _clip(n.text, cap);
-  }
-
-  static pw.Widget _page2(ScoutingSheet s, ScoutingPdfFit fit) {
-    final cards = s.cards;
-    if (cards.isEmpty) {
-      return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-        pw.SizedBox(height: _gap),
-        _heading('Hitter scouting cards'),
-        pw.SizedBox(height: 4),
-        _t('No hitter has a recorded jersey number, so no hitter cards can be built. Add jersey numbers in Game Input.', 9, color: _C.muted),
-      ]);
-    }
-    final fullSet = fit.fullIdx.toSet();
-    final full = [for (final i in fit.fullIdx) cards[i]];
-    final stubs = [for (var i = 0; i < cards.length; i++) if (!fullSet.contains(i)) cards[i]];
-
-    const cw = (_w - _gap) / 2;
-    final rows = <pw.Widget>[];
-    for (var i = 0; i < full.length; i += 2) {
-      var rowH = _cardHeightOf(full[i]);
-      if (i + 1 < full.length) {
-        final b = _cardHeightOf(full[i + 1]);
-        if (b > rowH) rowH = b;
-      }
-      rows.add(pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-        _card(full[i], cw, rowH),
-        pw.SizedBox(width: _gap),
-        i + 1 < full.length ? _card(full[i + 1], cw, rowH) : pw.SizedBox(width: cw),
-      ]));
-      if (i + 2 < full.length) rows.add(pw.SizedBox(height: 4));
-    }
-
-    return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+  static pw.Widget _noCards() {
+    return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
       pw.SizedBox(height: _gap),
-      _heading('Individual hitter scouting cards',
-          note: 'AVG/OBP/SLG are the hitter\'s numbers against this pitcher; heat is from the pitcher\'s view.'),
-      pw.SizedBox(
-        height: 18,
-        child: _t(
-            'Pitch rows: Pit = pitches, Use = share of that hitter\'s pitches, H-AB/AVG = at-bats ended on that pitch, Wh/Sw = misses over swings. '
-            'Count rows: Pit/Sw/Whiff = every pitch in that count; PA, H-AB, K, BB, AVG = at-bats that ended there.',
-            6, color: _C.muted),
-      ),
-      ...rows,
-      if (stubs.isNotEmpty) ...[
-        pw.SizedBox(height: _gap),
-        _heading('Remaining hitters (no room for a full card)',
-            note: '${stubs.length} of ${cards.length} hitters; full card on screen'),
-        _table(_stubTable(stubs), _w),
-        pw.SizedBox(height: 2),
-        _t('Pitch-type and count detail for these hitters is in the on-screen report; their batting lines are not omitted.',
-            6, color: _C.muted),
-      ],
+      _heading('Hitter scouting cards'),
+      pw.SizedBox(height: 4),
+      _t('No hitter has a recorded jersey number, so no hitter cards can be built. Add jersey numbers in Game Input.', 9, color: _C.muted),
     ]);
   }
 
-  static SheetTable _stubTable(List<HitterCard> hs) {
-    return SheetTable(
-      ['#', 'Hand', 'PA', 'AB', 'H-AB', 'AVG', 'OBP', 'SLG', 'Conf'],
-      [
-        for (final h in hs)
-          [
-            SheetCell('#${h.jersey}', bold: true, left: true),
-            SheetCell(h.hand),
-            SheetCell('${h.pa}'),
-            SheetCell('${h.ab}'),
-            SheetCell(h.hAb),
-            SheetCell(h.avg.value, tier: h.avg.tier),
-            SheetCell(h.obp.value, tier: h.obp.tier),
-            SheetCell(h.slg.value, tier: h.slg.tier),
-            SheetCell(h.conf, muted: true),
+  // ── one hitter per page ────────────────────────────────────────────
+
+  static const double _fFull = 9, _rowFull = 15, _headFull = 13;
+
+  /// A full-page individual card. Nothing is capped or clipped: every pitch
+  /// type, every count row and every note for THIS hitter is printed.
+  static pw.Widget _hitterPage(HitterCard c) {
+    final inner = _w - 12;
+    final metricW = (inner - 12) / 3;
+    return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+      pw.SizedBox(height: _gap),
+      pw.Container(
+        padding: const pw.EdgeInsets.all(6),
+        decoration: pw.BoxDecoration(
+          color: PdfColors.white,
+          border: pw.Border.all(color: _C.border, width: 0.8),
+          borderRadius: pw.BorderRadius.circular(3),
+        ),
+        child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+          pw.SizedBox(
+            height: 28,
+            child: pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.center, children: [
+              pw.Container(
+                padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+                decoration: pw.BoxDecoration(color: _C.ink, borderRadius: pw.BorderRadius.circular(3)),
+                child: _t('#${c.jersey}', 20, bold: true, color: PdfColors.white),
+              ),
+              pw.SizedBox(width: 8),
+              _t('Bats: ${c.hand}', 16, bold: true, color: _C.accent),
+              pw.Spacer(),
+              _t('Plate Appearances: ${c.pa} · At-Bats: ${c.ab} · Games: ${c.games} · ${c.conf} confidence', 9, color: _C.muted),
+            ]),
+          ),
+          pw.SizedBox(height: 6),
+          pw.SizedBox(
+            height: 30,
+            child: pw.Row(children: [
+              _batBox(c.avg, metricW, 30),
+              pw.SizedBox(width: 6),
+              _batBox(c.obp, metricW, 30),
+              pw.SizedBox(width: 6),
+              _batBox(c.slg, metricW, 30),
+            ]),
+          ),
+          pw.SizedBox(height: 4),
+          _t('AVG/OBP/SLG are this hitter\'s numbers against this pitcher; heat is from the pitcher\'s view.', 7, color: _C.muted),
+          pw.SizedBox(height: 6),
+          _heading('By pitch type',
+              note: 'P = pitches, Use = share of his pitches, H-AB/AVG = at-bats ended on that pitch, Wh/Sw = misses over swings'),
+          pw.SizedBox(height: 2),
+          _table(c.pitchTable, inner, font: _fFull, rowH: _rowFull, headH: _headFull, empty: 'No pitches recorded'),
+          pw.SizedBox(height: 8),
+          _heading('By count',
+              note: 'P/Sw/Whiff = every pitch in that count; PA, H-AB, K, BB, AVG = at-bats that ended there'),
+          pw.SizedBox(height: 2),
+          _table(c.countTable, inner, font: _fFull, rowH: _rowFull, headH: _headFull),
+          pw.SizedBox(height: 8),
+          for (final n in c.notes) ...[
+            _fullNote(n, inner),
+            pw.SizedBox(height: 3),
           ],
-      ],
-      [1.2, 1.3, 0.8, 0.8, 1.1, 1, 1, 1, 1.3],
-    );
+        ]),
+      ),
+    ]);
   }
 
-  // ── one hitter card ────────────────────────────────────────────────
-
-  static pw.Widget _card(HitterCard c, double w, double h) {
-    final inner = w - 6;
-    // Cap the pitch table so every card keeps the same height.
-    var pt = c.pitchTable;
-    if (pt.rows.length > _maxPitchRows) {
-      final extra = pt.rows.length - (_maxPitchRows - 1);
-      final cut = pt.rows.take(_maxPitchRows - 1).toList()
-        ..add([
-          SheetCell('+$extra types', muted: true, left: true),
-          ...List.generate(pt.headers.length - 1, (_) => const SheetCell('')),
-        ]);
-      pt = SheetTable(pt.headers, cut, pt.flex);
-    }
-    final metricW = (inner - 8) / 3;
-
+  static pw.Widget _fullNote(SheetNote n, double width) {
+    final prefix = '${n.label} · ${n.tag} · ${n.conf}: ';
     return pw.SizedBox(
-      width: w,
-      height: h,
-      child: pw.ClipRect(
-        child: pw.Container(
-          width: w,
-          height: h,
-          padding: const pw.EdgeInsets.all(3),
-          decoration: pw.BoxDecoration(
-            color: PdfColors.white,
-            border: pw.Border.all(color: _C.border, width: 0.8),
-            borderRadius: pw.BorderRadius.circular(3),
-          ),
-          child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-            // identification
-            pw.SizedBox(
-              height: 16,
-              child: pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.center, children: [
-                pw.Container(
-                  padding: const pw.EdgeInsets.symmetric(horizontal: 4),
-                  decoration: pw.BoxDecoration(color: _C.ink, borderRadius: pw.BorderRadius.circular(2)),
-                  child: _t('#${c.jersey}', 10, bold: true, color: PdfColors.white),
-                ),
-                pw.SizedBox(width: 4),
-                _t(c.hand, 10, bold: true, color: _C.accent),
-                pw.Spacer(),
-                _t('${c.pa} PA · ${c.ab} AB · ${c.games} G · ${c.conf} conf.', 6.5, color: _C.muted),
-              ]),
-            ),
-            pw.SizedBox(height: 2),
-            // AVG / OBP / SLG
-            pw.SizedBox(
-              height: 17,
-              child: pw.Row(children: [
-                _batBox(c.avg, metricW),
-                pw.SizedBox(width: 4),
-                _batBox(c.obp, metricW),
-                pw.SizedBox(width: 4),
-                _batBox(c.slg, metricW),
-              ]),
-            ),
-            pw.SizedBox(height: 2),
-            _table(pt, inner,
-                font: _fCard, rowH: _rowCard, headH: _headCard, empty: 'No pitches recorded'),
-            pw.SizedBox(height: 2),
-            _table(c.countTable, inner, font: _fCard, rowH: _rowCard, headH: _headCard),
-            pw.SizedBox(height: 2),
-            for (final n in c.notes) _note(n, inner),
-          ]),
+      width: width,
+      child: pw.RichText(
+        text: pw.TextSpan(
+          style: pw.TextStyle(fontSize: 10, color: _C.text),
+          children: [
+            pw.TextSpan(text: prefix, style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: _noteColor(n.label))),
+            pw.TextSpan(text: n.text),
+          ],
         ),
       ),
     );
   }
 
-  static pw.Widget _batBox(SheetMetric m, double w) {
+  static pw.Widget _batBox(SheetMetric m, double w, double h) {
     final tier = m.tier;
     return pw.Container(
       width: w,
-      height: 17,
+      height: h,
       padding: const pw.EdgeInsets.symmetric(horizontal: 3),
       decoration: pw.BoxDecoration(
         color: tier != null ? _C.wash(tier) : _C.tint,
@@ -686,34 +579,14 @@ class ScoutingPdfService {
         borderRadius: pw.BorderRadius.circular(2),
       ),
       child: pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.center, children: [
-        _t(m.label, 6.5, bold: true, color: _C.muted),
+        _t(m.label, 10, bold: true, color: _C.muted),
         pw.Spacer(),
         if (m.sub.isNotEmpty) ...[
-          _t(m.sub, 6, color: _C.muted),
-          pw.SizedBox(width: 3),
+          _t(m.sub, 8, color: _C.muted),
+          pw.SizedBox(width: 4),
         ],
-        _t(m.value, 11, bold: true, color: _C.ink),
+        _t(m.value, 18, bold: true, color: _C.ink),
       ]),
-    );
-  }
-
-  static pw.Widget _note(SheetNote n, double width) {
-    final prefix = '${n.label} · ${n.tag} · ${n.conf}: ';
-    final lines = _noteLines(n, width);
-    return pw.Container(
-      height: lines * (_fCard * 1.433) + 0.5,
-      width: width,
-      child: pw.RichText(
-        text: pw.TextSpan(
-          style: pw.TextStyle(fontSize: _fCard, color: _C.text),
-          children: [
-            pw.TextSpan(
-                text: prefix,
-                style: pw.TextStyle(fontSize: _fCard, fontWeight: pw.FontWeight.bold, color: _noteColor(n.label))),
-            pw.TextSpan(text: _clipNote(n, width)),
-          ],
-        ),
-      ),
     );
   }
 

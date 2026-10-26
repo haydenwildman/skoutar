@@ -358,6 +358,7 @@ class _GameModeViewState extends State<GameModeView> {
                         style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
                     side: BorderSide(color: AppColors.pitchColor(_seq[i]), width: 2),
                     onDeleted: () => setState(() => _seq.removeAt(i)),
+                    deleteButtonTooltipMessage: '', // no hover tooltip
                   ),
               ]),
               const SizedBox(height: 10),

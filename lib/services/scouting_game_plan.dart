@@ -933,7 +933,7 @@ class ScoutingGamePlanBuilder {
               ? 'Review $j\'s full pitch history and consider a more varied approach rather than leaning on the ${upperType(top.type)}.'
               : 'Review $j\'s full pitch history before settling on one approach.',
           conf: c,
-          sample: '${h.ab} AB',
+          sample: 'At-Bats: ${h.ab}',
           priority: (60 + h.hits * 5 + h.xbh * 5) * _confFactor(c),
         ));
       }
@@ -949,7 +949,7 @@ class ScoutingGamePlanBuilder {
                 : null,
             suggestion: 'Consider the ${upperType(t.type)} in appropriate counts, especially to finish at-bats.',
             conf: c,
-            sample: '${t.swings} swings',
+            sample: 'Swings: ${t.swings}',
             priority: (45 + (t.whiffPct ?? 0) * 30) * _confFactor(c),
           ));
         }
@@ -961,7 +961,7 @@ class ScoutingGamePlanBuilder {
             tendency: 'A repeated take across ${t.pitches} pitches.',
             suggestion: 'May be a useful pitch to steal a strike when you need one.',
             conf: confFor(t.pitches, GpConfig.minPitches, GpConfig.goodPitches),
-            sample: '${t.pitches} pitches',
+            sample: 'Pitches: ${t.pitches}',
             priority: 38 * _confFactor(confFor(t.pitches, GpConfig.minPitches, GpConfig.goodPitches)),
           ));
         }
@@ -978,7 +978,7 @@ class ScoutingGamePlanBuilder {
           tendency: t.swings >= 25 ? 'Whiff rate has held up over a large number of swings.' : null,
           suggestion: 'The ${upperType(t.type)} has been a reliable swing-and-miss pitch against this team.',
           conf: c,
-          sample: '${t.swings} swings',
+          sample: 'Swings: ${t.swings}',
           priority: (50 + (t.whiffPct ?? 0) * 30) * _confFactor(c),
         ));
       }
@@ -991,7 +991,7 @@ class ScoutingGamePlanBuilder {
           tendency: t.ab >= 12 ? 'The pattern has held across a large sample.' : null,
           suggestion: 'Not a reason to abandon the pitch by itself - check counts and sequences, and vary how it is used.',
           conf: c,
-          sample: '${t.ab} AB',
+          sample: 'At-Bats: ${t.ab}',
           priority: (48 + (t.baa ?? 0) * 25) * _confFactor(c),
         ));
       }
@@ -1012,7 +1012,7 @@ class ScoutingGamePlanBuilder {
           tendency: totalPaTeam >= 25 ? 'The walk rate holds across a large number of plate appearances.' : null,
           suggestion: 'Prioritise first-pitch strikes and getting ahead.',
           conf: c,
-          sample: '$totalPaTeam PA',
+          sample: 'Plate Appearances: $totalPaTeam',
           priority: 55 * _confFactor(c),
         ));
       }
@@ -1024,7 +1024,7 @@ class ScoutingGamePlanBuilder {
           tendency: totalPaTeam >= 25 ? 'The strikeout rate holds across a meaningful sample.' : null,
           suggestion: 'Look at which pitches ended those strikeouts and lean on what has been working.',
           conf: c,
-          sample: '$totalPaTeam PA',
+          sample: 'Plate Appearances: $totalPaTeam',
           priority: 44 * _confFactor(c),
         ));
       }
@@ -1036,12 +1036,12 @@ class ScoutingGamePlanBuilder {
         final c = confFor(n, GpConfig.minSeq, 5);
         out.add(Takeaway(
           kind: 'pattern',
-          headline: 'A sequence worth revisiting: ${s['seq']}',
-          fact: 'The opening sequence ${s['seq']} appeared in $n at-bats with a Pitch Sequencing score of ${s['score']}.',
+          headline: 'A sequence worth revisiting: ${_seqText(s['seq'])}',
+          fact: 'The opening sequence ${_seqText(s['seq'])} appeared in $n at-bats with a Pitch Sequencing score of ${s['score']}.',
           tendency: n >= 5 ? 'It has scored well across several at-bats.' : null,
           suggestion: 'Consider it again where the situation fits - hitters may adjust if it is repeated every time.',
           conf: c,
-          sample: '$n at-bats',
+          sample: 'At-Bats: $n',
           priority: 40 * _confFactor(c),
         ));
         break;
@@ -1053,12 +1053,12 @@ class ScoutingGamePlanBuilder {
         final c = confFor(n, GpConfig.minSeq, 5);
         out.add(Takeaway(
           kind: 'pattern',
-          headline: 'A sequence to reconsider: ${s['seq']}',
-          fact: 'The opening sequence ${s['seq']} appeared in $n at-bats with a Pitch Sequencing score of ${s['score']}.',
+          headline: 'A sequence to reconsider: ${_seqText(s['seq'])}',
+          fact: 'The opening sequence ${_seqText(s['seq'])} appeared in $n at-bats with a Pitch Sequencing score of ${s['score']}.',
           tendency: n >= 5 ? 'It has scored poorly across several at-bats.' : null,
           suggestion: 'Review those at-bats before using it again. A low score reflects count, matchup and setup, not just the result.',
           conf: c,
-          sample: '$n at-bats',
+          sample: 'At-Bats: $n',
           priority: 42 * _confFactor(c),
         ));
         break;
@@ -1073,7 +1073,7 @@ class ScoutingGamePlanBuilder {
         tendency: null,
         suggestion: 'Flagged for review - location and intended pitch are not tracked, so check whether it was a decision or an execution issue.',
         conf: Conf.low,
-        sample: '${p['n']} at-bats',
+        sample: 'At-Bats: ${p['n']}',
         priority: 36 * _confFactor(Conf.low),
       ));
     }
@@ -1094,3 +1094,7 @@ class ScoutingGamePlanBuilder {
     return picked;
   }
 }
+
+/// Teko has no arrow glyph and an unbroken FB→CH→SL cannot wrap, so sequences
+/// are shown with spaces around ">" (wraps between pitches, never mid-word).
+String _seqText(Object? seq) => '$seq'.replaceAll('→', ' > ');

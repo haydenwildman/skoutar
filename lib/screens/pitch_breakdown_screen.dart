@@ -549,8 +549,9 @@ class _PitchBreakdownScreenState extends State<PitchBreakdownScreen> {
                           for (final m in shown)
                             Padding(
                               padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 3),
-                              child: Tooltip(
-                                message: _pitchMetricInfo[m.label] ?? '',
+                              child: StatHoldInfo(
+                                title: m.label,
+                                description: _pitchMetricInfo[m.label],
                                 child: Text(m.label,
                                     textAlign: TextAlign.center,
                                     style: TextStyle(

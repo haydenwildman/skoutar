@@ -1,54 +1,69 @@
 import 'package:flutter/material.dart';
 import '../services/scouting_pdf_service.dart' show ScoutingPdfFit;
+import '../utils/responsive.dart';
 import '../services/scouting_report_sheet.dart';
 import '../theme/app_theme.dart';
 import 'glow.dart';
 
-/// The Scouting Report as two letter-proportioned pages, all content visible
+/// The Scouting Report: a team-overview page followed by ONE individual
+/// scouting card (its own page) for every eligible hitter, all content visible
 /// (no dropdowns, accordions or hidden panels). Draws the same
-/// [ScoutingSheet] the PDF export uses, in the app's own typography (the text
-/// inherits the theme's Teko; no font is set here) and heat-map styling
-/// ([ScaleStyle], the perf palette).
+/// [ScoutingSheet] the PDF export uses, in the app's own typography and
+/// heat-map styling ([ScaleStyle], the perf palette).
 ///
-/// On screen nothing is clipped or capped: if a page has more content than a
-/// printed sheet can hold legibly, the page simply grows, and a note says how
-/// the PDF handles it ([fit]).
+/// Responsive: on desktop the pages are letter-proportioned (max 816 wide). On
+/// phones everything stacks into one column that fits the screen width; tables
+/// scale their text down instead of scrolling sideways.
 class ScoutingReportPages extends StatelessWidget {
   final ScoutingSheet sheet;
   final ScoutingPdfFit fit;
   const ScoutingReportPages({super.key, required this.sheet, required this.fit});
 
   static const double _paperW = 816; // 8.5 in at 96 dpi
-  static const double _minW = 720; // narrower screens scroll sideways
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, c) {
-      final w = c.maxWidth.isFinite ? c.maxWidth.clamp(_minW, _paperW).toDouble() : _paperW;
+      final w = c.maxWidth.isFinite ? c.maxWidth.clamp(0.0, _paperW).toDouble() : _paperW;
+      final phone = w < Breakpoints.phone;
+      final total = 1 + sheet.cards.length;
       final pages = SizedBox(
         width: w,
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          _Paper(child: _Page1(sheet)),
-          const SizedBox(height: 14),
-          _Paper(child: _Page2(sheet, fit)),
+          _Paper(phone: phone, child: _Page1(sheet, phone: phone, pages: total)),
+          if (sheet.cards.isEmpty) ...[
+            const SizedBox(height: 14),
+            _Paper(
+              phone: phone,
+              child: const Text(
+                  'No hitter has a recorded jersey number, so no hitter cards can be built. Add jersey numbers in Game Input.',
+                  style: _muted),
+            ),
+          ],
+          // One card per hitter, each on its own page.
+          for (var i = 0; i < sheet.cards.length; i++) ...[
+            const SizedBox(height: 14),
+            _Paper(
+              phone: phone,
+              child: _HitterPage(sheet, sheet.cards[i], page: i + 2, pages: total, phone: phone),
+            ),
+          ],
         ]),
       );
-      if (c.maxWidth >= _minW) {
-        return Center(child: pages);
-      }
-      return SingleChildScrollView(scrollDirection: Axis.horizontal, child: pages);
+      return Center(child: pages);
     });
   }
 }
 
 class _Paper extends StatelessWidget {
   final Widget child;
-  const _Paper({required this.child});
+  final bool phone;
+  const _Paper({required this.child, this.phone = false});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: EdgeInsets.all(phone ? 10 : 18),
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border.all(color: AppColors.colBorder),
@@ -64,27 +79,32 @@ class _Paper extends StatelessWidget {
 
 const TextStyle _muted = TextStyle(fontSize: 11, color: AppColors.colMuted);
 
-Widget _pageHeader(ScoutingSheet s, String title, int page) {
+Widget _pageHeader(ScoutingSheet s, String title, int page, int pages, {bool phone = false}) {
   final r = s.r;
   final threat = r.threatLevel == 'high'
       ? AppColors.perfPoor
       : (r.threatLevel == 'medium' ? AppColors.perfAverage : AppColors.perfExcellent);
   final threatText = r.threatLevel == 'medium' ? AppColors.colText : Colors.white;
   return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-    Row(children: [
-      Expanded(
-        child: Text(title,
-            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 22, color: AppColors.ink)),
-      ),
-      Text('${r.gamesFaced} game${r.gamesFaced == 1 ? '' : 's'} · Page $page of 2', style: _muted),
-      const SizedBox(width: 10),
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-        decoration: BoxDecoration(color: threat, borderRadius: BorderRadius.circular(12)),
-        child: Text('${r.threatLevel.toUpperCase()} THREAT',
-            style: TextStyle(color: threatText, fontWeight: FontWeight.w900, fontSize: 12)),
-      ),
-    ]),
+    Wrap(
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 10,
+      runSpacing: 4,
+      children: [
+        Text(title, style: TextStyle(fontWeight: FontWeight.w900, fontSize: phone ? 18 : 22, color: AppColors.ink)),
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          Text('${r.gamesFaced} game${r.gamesFaced == 1 ? '' : 's'} · Page $page of $pages', style: _muted),
+          const SizedBox(width: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+            decoration: BoxDecoration(color: threat, borderRadius: BorderRadius.circular(12)),
+            child: Text('${r.threatLevel.toUpperCase()} THREAT',
+                style: TextStyle(color: threatText, fontWeight: FontWeight.w900, fontSize: 12)),
+          ),
+        ]),
+      ],
+    ),
     const SizedBox(height: 4),
     Container(height: 2, color: AppColors.brandOrangeDeep),
     const SizedBox(height: 10),
@@ -111,7 +131,8 @@ Widget _gapBox([double h = 10]) => SizedBox(height: h);
 
 /// One heat-map-aware table. A tier color becomes the app's own washed fill
 /// ([ScaleStyle.fill]); the number is always dark text on top of it.
-Widget _table(SheetTable t, {double font = 12, String empty = 'No data recorded'}) {
+Widget _table(SheetTable t, {double font = 12, String empty = 'No data recorded', bool phone = false}) {
+  if (phone && font > 10.5) font = 10.5;
   if (t.rows.isEmpty) {
     return Container(
       padding: const EdgeInsets.all(6),
@@ -125,13 +146,19 @@ Widget _table(SheetTable t, {double font = 12, String empty = 'No data recorded'
       color: header ? AppColors.ink : (tier != null ? ScaleStyle.fill(tier) : null),
       padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
       alignment: c.left ? Alignment.centerLeft : Alignment.center,
-      child: Text(
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: c.left ? Alignment.centerLeft : Alignment.center,
+        child: Text(
         c.text,
+        maxLines: 1,
+        softWrap: false,
         textAlign: c.left ? TextAlign.left : TextAlign.center,
         style: TextStyle(
           fontSize: header ? font - 1 : font,
           fontWeight: (header || c.bold) ? FontWeight.w800 : FontWeight.w500,
           color: header ? Colors.white : (c.muted ? AppColors.colMuted : AppColors.colText),
+        ),
         ),
       ),
     );
@@ -154,22 +181,33 @@ Widget _table(SheetTable t, {double font = 12, String empty = 'No data recorded'
   );
 }
 
+/// Every summary box has the same fixed height, so long labels or a missing
+/// sub-line never change its size.
 Widget _metricBox(SheetMetric m, {double valueSize = 24}) {
   final tier = m.tier;
   return Container(
+    height: 78,
+    alignment: Alignment.center,
     padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
     decoration: BoxDecoration(
       color: tier != null ? ScaleStyle.fill(tier) : AppColors.tint,
       border: Border.all(color: tier ?? AppColors.colBorder, width: tier != null ? 2 : 1),
       borderRadius: BorderRadius.circular(4),
     ),
-    child: Column(mainAxisSize: MainAxisSize.min, children: [
-      Text(m.label.toUpperCase(),
-          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppColors.colMuted)),
-      Text(m.value,
-          style: TextStyle(fontSize: valueSize, fontWeight: FontWeight.w900, color: AppColors.ink, height: 1.05)),
-      if (m.sub.isNotEmpty) Text(m.sub, style: const TextStyle(fontSize: 10, color: AppColors.colMuted)),
-    ]),
+    child: FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(m.label.toUpperCase(),
+            maxLines: 1,
+            softWrap: false,
+            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppColors.colMuted)),
+        Text(m.value,
+            maxLines: 1,
+            style: TextStyle(fontSize: valueSize, fontWeight: FontWeight.w900, color: AppColors.ink, height: 1.05)),
+        if (m.sub.isNotEmpty)
+          Text(m.sub, maxLines: 1, softWrap: false, style: const TextStyle(fontSize: 10, color: AppColors.colMuted)),
+      ]),
+    ),
   );
 }
 
@@ -177,62 +215,73 @@ Widget _metricBox(SheetMetric m, {double valueSize = 24}) {
 
 class _Page1 extends StatelessWidget {
   final ScoutingSheet s;
-  const _Page1(this.s);
+  final bool phone;
+  final int pages;
+  const _Page1(this.s, {this.phone = false, this.pages = 2});
 
   @override
   Widget build(BuildContext context) {
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      _pageHeader(s, 'SCOUTING REPORT: ${s.r.team.toUpperCase()}', 1),
+      _pageHeader(s, 'SCOUTING REPORT: ${s.r.team.toUpperCase()}', 1, pages, phone: phone),
       _section('Team performance vs this pitcher',
           note: 'Whole-opponent totals. ERA/WHIP use innings pitched; K%, BB% and XBH use plate appearances.'),
-      Row(children: [
-        for (var i = 0; i < s.summary.length; i++) ...[
-          if (i > 0) const SizedBox(width: 5),
-          Expanded(child: _metricBox(s.summary[i])),
-        ],
-      ]),
+      LayoutBuilder(builder: (context, c) {
+        // Equal-width boxes: one row on wide screens, 3 or 2 per row on phones.
+        final perRow = phone ? (c.maxWidth >= 420 ? 3 : 2) : s.summary.length;
+        const gap = 5.0;
+        final w = ((c.maxWidth - gap * (perRow - 1)) / perRow).floorToDouble();
+        return Wrap(spacing: gap, runSpacing: gap, children: [
+          for (final m in s.summary) SizedBox(width: w, child: _metricBox(m, valueSize: phone ? 20 : 24)),
+        ]);
+      }),
       _gapBox(),
       _section('Pitch effectiveness vs this team',
           note: 'Strike/Swing/Whiff are pitch-level rates; H-AB, AVG, XBH, K, BB count only at-bats that ENDED on that pitch.'),
-      _table(s.pitches, empty: 'No pitch data recorded'),
-      _foot('Pit = pitches · Use = share of all pitches · Sw = swings (Whiff % = misses ÷ swings). '
+      _table(s.pitches, empty: 'No pitch data recorded', phone: phone),
+      _foot('P = pitches · Use = share of all pitches · Sw = swings (Whiff % = misses ÷ swings). '
           'Usage, strike rate and whiff rate are different measures from AVG against.'),
       _gapBox(),
       _twoUp(
-        _titled('Previous games', 'AVG, K%, BB% per game', _table(s.games, empty: 'No games recorded'),
+        _titled('Previous games', 'AVG, K%, BB% per game', _table(s.games, empty: 'No games recorded', phone: phone),
             foot: s.gamesHidden > 0
                 ? '${s.gamesHidden} earlier game(s) not listed here; they are in the team totals above.'
                 : 'ER = earned runs charged in that game.'),
         _titled('Most dangerous hitters', 'ranked by OBP, min. 2 PA, top 5',
-            _table(s.dangerous, empty: 'Need 2+ PA from a hitter'),
-            foot: 'A high OBP over 2–4 PA is a note, not proof. Full cards on page 2.'),
+            _table(s.dangerous, empty: 'Need 2+ PA from a hitter', phone: phone),
+            foot: 'A high OBP over 2–4 PA is a note, not proof. Each hitter has their own card on the pages that follow.'),
       ),
       _gapBox(),
       _twoUp(
-        _titled('Team results by count', 'Ahead / Even / Behind are exclusive', _table(s.teamCounts),
-            foot: 'Pit/Sw/Whiff count every pitch in that count; PA, H-AB, K, BB count at-bats that ENDED there. '
+        _titled('Team results by count', 'Ahead / Even / Behind are exclusive', _table(s.teamCounts, phone: phone),
+            foot: 'P/Sw/Whiff count every pitch in that count; PA, H-AB, K, BB count at-bats that ENDED there. '
                 '* overlaps the rows above.'),
-        _titled('Hitters who have struggled', 'hitless, min. 2 PA', _table(s.struggled, empty: 'No hitless hitter with 2+ PA'),
+        _titled('Hitters who have struggled', 'hitless, min. 2 PA', _table(s.struggled, empty: 'No hitless hitter with 2+ PA', phone: phone),
             foot: 'Recorded matchups only; not proof a hitter is weak.'),
       ),
       _gapBox(),
       _section('Game plan & key takeaways',
           note: 'Observed = counted from recorded events; Suggested = an idea, not a guarantee.'),
-      Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Expanded(child: _findingCol('Strengths to exploit', AppColors.perfExcellent, s.strengths)),
-        const SizedBox(width: 6),
-        Expanded(child: _findingCol('Potential weaknesses', AppColors.perfPoor, s.weaknesses)),
-        const SizedBox(width: 6),
-        Expanded(child: _findingCol('Suggested approaches', AppColors.brandOrangeDeep, s.approaches)),
-        const SizedBox(width: 6),
-        Expanded(child: _findingCol('Cautions', AppColors.ink, s.cautions)),
-      ]),
+      LayoutBuilder(builder: (context, c) {
+        // 4 columns on desktop, 1 column on phones; equal widths either way.
+        final cols = phone ? 1 : 4;
+        const gap = 6.0;
+        final w = ((c.maxWidth - gap * (cols - 1)) / cols).floorToDouble();
+        return Wrap(spacing: gap, runSpacing: 10, children: [
+          SizedBox(width: w, child: _findingCol('Strengths to exploit', AppColors.perfExcellent, s.strengths)),
+          SizedBox(width: w, child: _findingCol('Potential weaknesses', AppColors.perfPoor, s.weaknesses)),
+          SizedBox(width: w, child: _findingCol('Suggested approaches', AppColors.brandOrangeDeep, s.approaches)),
+          SizedBox(width: w, child: _findingCol('Cautions', AppColors.ink, s.cautions)),
+        ]);
+      }),
       _gapBox(8),
       const _HeatLegend(),
     ]);
   }
 
   Widget _twoUp(Widget a, Widget b) => LayoutBuilder(builder: (context, c) {
+        if (phone) {
+          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [a, const SizedBox(height: 10), b]);
+        }
         return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Expanded(child: a),
           const SizedBox(width: 10),
@@ -286,45 +335,29 @@ class _HeatLegend extends StatelessWidget {
       );
 }
 
-// ───────────────────────── page 2 ─────────────────────────
+// ───────────────────── one hitter per page ─────────────────────
 
-class _Page2 extends StatelessWidget {
+class _HitterPage extends StatelessWidget {
   final ScoutingSheet s;
-  final ScoutingPdfFit fit;
-  const _Page2(this.s, this.fit);
+  final HitterCard c;
+  final int page;
+  final int pages;
+  final bool phone;
+  const _HitterPage(this.s, this.c, {required this.page, required this.pages, required this.phone});
 
   @override
   Widget build(BuildContext context) {
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      _pageHeader(s, 'HITTER SCOUTING CARDS: ${s.r.team.toUpperCase()}', 2),
-      _section('Individual hitter scouting cards',
-          note: 'AVG/OBP/SLG are the hitter\'s numbers against this pitcher; heat is from the pitcher\'s view.'),
-      Text(
-          'Pitch rows: Pit = pitches, Use = share of that hitter\'s pitches, H-AB/AVG = at-bats ended on that pitch, Wh/Sw = misses over swings. '
-          'Count rows: Pit/Sw/Whiff = every pitch in that count; PA, H-AB, K, BB, AVG = at-bats that ended there. '
+      _pageHeader(s, 'HITTER SCOUTING CARD: ${s.r.team.toUpperCase()}', page, pages, phone: phone),
+      _HitterCardView(c, phone: phone),
+      _gapBox(8),
+      const Text(
+          'AVG/OBP/SLG are the hitter\'s numbers against this pitcher; heat is from the pitcher\'s view. '
+          'Pitch rows: P = pitches, Use = share of that hitter\'s pitches, H-AB/AVG = at-bats ended on that pitch, Wh/Sw = misses over swings. '
+          'Count rows: P/Sw/Whiff = every pitch in that count; PA, H-AB, K, BB, AVG = at-bats that ended there. '
           'Ahead / Even / Behind are exclusive; * two strikes overlaps them.',
           style: _muted),
-      if (!fit.allFit && fit.totalHitters > 0)
-        Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text(
-              'PDF note: ${fit.fullCards} of ${fit.totalHitters} hitters fit as full cards on the printed page; '
-              'the other ${fit.rosterRows} are printed as a roster table with their batting lines. Everything is shown here.',
-              style: const TextStyle(fontSize: 11, color: AppColors.brandOrangeDeep, fontWeight: FontWeight.w700)),
-        ),
-      _gapBox(8),
-      if (s.cards.isEmpty)
-        const Text('No hitter has a recorded jersey number, so no hitter cards can be built. Add jersey numbers in Game Input.',
-            style: _muted)
-      else
-        LayoutBuilder(builder: (context, c) {
-          const gap = 8.0;
-          final w = (c.maxWidth - gap) / 2;
-          return Wrap(spacing: gap, runSpacing: gap, children: [
-            for (final h in s.cards) SizedBox(width: w, child: _HitterCardView(h)),
-          ]);
-        }),
-      _gapBox(8),
+      _gapBox(4),
       const _HeatLegend(),
     ]);
   }
@@ -332,47 +365,53 @@ class _Page2 extends StatelessWidget {
 
 class _HitterCardView extends StatelessWidget {
   final HitterCard c;
-  const _HitterCardView(this.c);
+  final bool phone;
+  const _HitterCardView(this.c, {this.phone = false});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(6),
+      padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border.all(color: AppColors.colBorder),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Row(children: [
+        Wrap(crossAxisAlignment: WrapCrossAlignment.center, spacing: 8, runSpacing: 4, children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
             decoration: BoxDecoration(color: AppColors.ink, borderRadius: BorderRadius.circular(3)),
             child: Text('#${c.jersey}',
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15)),
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 20)),
           ),
-          const SizedBox(width: 6),
-          Text(c.hand,
-              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: AppColors.brandOrangeDeep)),
-          const Spacer(),
-          Text('${c.pa} PA · ${c.ab} AB · ${c.games} G · ${c.conf} conf.', style: _muted),
+          Text('Bats: ${c.hand}',
+              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.brandOrangeDeep)),
+          Text('Plate Appearances: ${c.pa} · At-Bats: ${c.ab} · Games: ${c.games} · ${c.conf} confidence', style: _muted),
         ]),
-        const SizedBox(height: 4),
-        Row(children: [
-          Expanded(child: _batBox(c.avg)),
-          const SizedBox(width: 4),
-          Expanded(child: _batBox(c.obp)),
-          const SizedBox(width: 4),
-          Expanded(child: _batBox(c.slg)),
-        ]),
-        const SizedBox(height: 4),
-        _table(c.pitchTable, font: 11, empty: 'No pitches recorded'),
-        const SizedBox(height: 4),
-        _table(c.countTable, font: 11),
-        const SizedBox(height: 4),
+        const SizedBox(height: 8),
+        LayoutBuilder(builder: (context, k) {
+          // AVG / OBP / SLG: three equal boxes on every screen size.
+          const gap = 6.0;
+          final w = ((k.maxWidth - gap * 2) / 3).floorToDouble();
+          return Row(children: [
+            SizedBox(width: w, child: _batBox(c.avg)),
+            const SizedBox(width: gap),
+            SizedBox(width: w, child: _batBox(c.obp)),
+            const SizedBox(width: gap),
+            SizedBox(width: w, child: _batBox(c.slg)),
+          ]);
+        }),
+        const SizedBox(height: 10),
+        _section('By pitch type'),
+        _table(c.pitchTable, font: 12, empty: 'No pitches recorded', phone: phone),
+        const SizedBox(height: 10),
+        _section('By count'),
+        _table(c.countTable, font: 12, phone: phone),
+        const SizedBox(height: 10),
         for (final n in c.notes)
           Padding(
-            padding: const EdgeInsets.only(bottom: 2),
+            padding: const EdgeInsets.only(bottom: 4),
             child: Text.rich(TextSpan(children: [
               TextSpan(
                   text: '${n.label} · ${n.tag} · ${n.conf}: ',
@@ -382,27 +421,31 @@ class _HitterCardView extends StatelessWidget {
                           ? AppColors.perfExcellent
                           : (n.label == 'Caution' ? AppColors.perfPoor : AppColors.brandOrangeDeep))),
               TextSpan(text: n.text),
-            ]), style: const TextStyle(fontSize: 11.5)),
+            ]), style: const TextStyle(fontSize: 13)),
           ),
       ]),
     );
   }
 
+  /// Fixed-height, equal-width AVG / OBP / SLG box.
   Widget _batBox(SheetMetric m) {
     final tier = m.tier;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      height: 44,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
         color: tier != null ? ScaleStyle.fill(tier) : AppColors.tint,
         border: Border.all(color: tier ?? AppColors.colBorder, width: tier != null ? 1.5 : 1),
         borderRadius: BorderRadius.circular(3),
       ),
       child: Row(children: [
-        Text(m.label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppColors.colMuted)),
+        Text(m.label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: AppColors.colMuted)),
         const Spacer(),
         if (m.sub.isNotEmpty)
-          Padding(padding: const EdgeInsets.only(right: 4), child: Text(m.sub, style: const TextStyle(fontSize: 10, color: AppColors.colMuted))),
-        Text(m.value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: AppColors.ink)),
+          Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Text(m.sub, style: const TextStyle(fontSize: 10, color: AppColors.colMuted))),
+        Text(m.value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: AppColors.ink)),
       ]),
     );
   }

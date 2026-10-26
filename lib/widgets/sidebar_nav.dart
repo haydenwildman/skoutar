@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'skoutar_logo.dart';
+import 'stat_hold_info.dart';
 
 class NavItem {
   final IconData icon;
@@ -75,13 +76,12 @@ class SidebarNav extends StatelessWidget {
                       children: [
                         SkoutarLogo(height: 28),
                         const SizedBox(height: 8),
-                        IconButton(
+                        HoldTip(message: 'Sign out', child: IconButton(
                           icon: const Icon(Icons.logout, color: Colors.white70, size: 18),
-                          tooltip: 'Sign out',
                           onPressed: onLogout,
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(),
-                        ),
+                        )),
                       ],
                     )
                   : Row(
@@ -93,16 +93,15 @@ class SidebarNav extends StatelessWidget {
                               alignment: Alignment.centerLeft,
                               child: SkoutarLogo(height: 44)),
                         ),
-                        IconButton(
+                        HoldTip(message: 'Sign out', child: IconButton(
                           icon: const Icon(Icons.logout, color: Colors.white70, size: 18),
-                          tooltip: 'Sign out',
                           onPressed: onLogout,
-                        ),
+                        )),
                       ],
                     ),
             ),
             // ── Collapse / expand toggle ────────────────────────────
-            Tooltip(
+            HoldTip(
               message: collapsed ? 'Expand sidebar' : 'Collapse sidebar',
               child: InkWell(
                 onTap: onToggleCollapse,
@@ -130,7 +129,7 @@ class SidebarNav extends StatelessWidget {
               ),
             ),
             if (collapsed)
-              Tooltip(
+              HoldTip(
                 message: '$pitcherName (tap to switch pitcher)',
                 child: GestureDetector(
                   onTap: onAccount,
@@ -293,6 +292,6 @@ class SidebarNav extends StatelessWidget {
               ),
       ),
     );
-    return collapsed ? Tooltip(message: item.label, child: tile) : tile;
+    return collapsed ? HoldTip(message: item.label, child: tile) : tile;
   }
 }

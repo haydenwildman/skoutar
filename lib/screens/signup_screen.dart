@@ -13,6 +13,7 @@ import '../widgets/orange_glow_button.dart';
 import '../widgets/password_field.dart';
 import '../widgets/pitcher_form.dart';
 import '../widgets/skoutar_logo.dart';
+import '../widgets/stat_hold_info.dart';
 
 /// Guided registration:
 ///   Plan -> Account (owner email + password) -> Pitcher -> [More pitchers] -> Review
@@ -425,16 +426,14 @@ class _SignupScreenState extends State<SignupScreen> {
             ),
           ),
           if (removable) ...[
-            IconButton(
-              tooltip: 'Edit',
+            HoldTip(message: 'Edit', child: IconButton(
               icon: const Icon(Icons.edit_outlined, size: 18),
               onPressed: () => _addOrEditExtra(existing: d),
-            ),
-            IconButton(
-              tooltip: 'Remove',
+            )),
+            HoldTip(message: 'Remove', child: IconButton(
               icon: const Icon(Icons.close, size: 18),
               onPressed: () => setState(() => _pitchers.remove(d)),
-            ),
+            )),
           ],
         ],
       ),

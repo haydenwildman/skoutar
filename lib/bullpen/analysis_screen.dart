@@ -21,6 +21,7 @@ import 'recommendations.dart';
 import 'session_summary.dart';
 import 'store.dart';
 import 'widgets.dart';
+import '../widgets/stat_hold_info.dart';
 
 enum _Range { all, days30, days90 }
 
@@ -32,6 +33,11 @@ class PitchingAnalysisScreen extends StatefulWidget {
 }
 
 class _PitchingAnalysisScreenState extends State<PitchingAnalysisScreen> {
+  /// Bullpen number (x value) of the point being pressed and held on the
+  /// progress chart. The chart's own touch handling also reacts to a hovering
+  /// mouse, so it is turned off and driven only by press-and-hold.
+  int? _heldRun;
+
   _Range _range = _Range.all;
   String? _pitch; // null = all pitches
   BullpenType? _type; // null = all bullpen types
@@ -389,6 +395,17 @@ class _PitchingAnalysisScreenState extends State<PitchingAnalysisScreen> {
     );
   }
 
+  List<ShowingTooltipIndicators> _heldIndicators(List<LineChartBarData> bars) {
+    final run = _heldRun;
+    if (run == null) return const <ShowingTooltipIndicators>[];
+    final spots = <LineBarSpot>[
+      for (var b = 0; b < bars.length; b++)
+        for (final sp in bars[b].spots)
+          if (sp.x == run.toDouble()) LineBarSpot(bars[b], b, sp),
+    ];
+    return spots.isEmpty ? const <ShowingTooltipIndicators>[] : [ShowingTooltipIndicators(spots)];
+  }
+
   Widget _progress(BullpenAnalysis a, AppSession app) {
     final ss = a.perSession;
     final accSpots = <FlSpot>[], zoneSpots = <FlSpot>[];
@@ -397,6 +414,7 @@ class _PitchingAnalysisScreenState extends State<PitchingAnalysisScreen> {
       if (s.targetAccuracy != null) accSpots.add(FlSpot(i + 1.0, s.targetAccuracy!));
       if (s.zonePct != null) zoneSpots.add(FlSpot(i + 1.0, s.zonePct!));
     }
+    final bars = <LineChartBarData>[];
     LineChartBarData line(List<FlSpot> spots, Color c) => LineChartBarData(
           spots: spots,
           isCurved: false,
@@ -428,10 +446,33 @@ class _PitchingAnalysisScreenState extends State<PitchingAnalysisScreen> {
               maxY: 100,
               minX: 1,
               maxX: ss.length.toDouble(),
-              lineBarsData: [
-                if (accSpots.isNotEmpty) line(accSpots, AppColors.brandOrangeDeep),
-                if (zoneSpots.isNotEmpty) line(zoneSpots, AppColors.ink),
-              ],
+              lineBarsData: bars
+                ..clear()
+                ..addAll([
+                  if (accSpots.isNotEmpty) line(accSpots, AppColors.brandOrangeDeep),
+                  if (zoneSpots.isNotEmpty) line(zoneSpots, AppColors.ink),
+                ]),
+              showingTooltipIndicators: _heldIndicators(bars),
+              lineTouchData: LineTouchData(
+                // Hover never shows a tooltip: only press-and-hold does.
+                handleBuiltInTouches: false,
+                touchSpotThreshold: 24,
+                touchCallback: (event, response) {
+                  if (event is FlLongPressStart || event is FlLongPressMoveUpdate) {
+                    final hit = response?.lineBarSpots;
+                    if (hit != null && hit.isNotEmpty) {
+                      final run = hit.first.x.round();
+                      if (_heldRun != run) setState(() => _heldRun = run);
+                    }
+                  } else if (event is FlLongPressEnd ||
+                      event is FlPanEndEvent ||
+                      event is FlTapUpEvent ||
+                      event is FlTapCancelEvent ||
+                      event is FlPanCancelEvent) {
+                    if (_heldRun != null) setState(() => _heldRun = null);
+                  }
+                },
+              ),
               gridData: const FlGridData(show: true, drawVerticalLine: false, horizontalInterval: 25),
               borderData: FlBorderData(show: false),
               titlesData: FlTitlesData(
@@ -728,8 +769,7 @@ class _PitchingAnalysisScreenState extends State<PitchingAnalysisScreen> {
                       },
                     ),
                   ),
-                  IconButton(
-                    tooltip: 'Fewer reps',
+                  HoldTip(message: 'Fewer reps', child: IconButton(
                     visualDensity: VisualDensity.compact,
                     icon: const Icon(Icons.remove_circle_outline),
                     onPressed: plan.sets[i].reps <= 1
@@ -739,10 +779,9 @@ class _PitchingAnalysisScreenState extends State<PitchingAnalysisScreen> {
                             sets[i] = sets[i].copyWith(reps: sets[i].reps - 1);
                             setPlan(plan.copyWith(sets: sets));
                           },
-                  ),
+                  )),
                   Text('${plan.sets[i].reps}', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-                  IconButton(
-                    tooltip: 'More reps',
+                  HoldTip(message: 'More reps', child: IconButton(
                     visualDensity: VisualDensity.compact,
                     icon: const Icon(Icons.add_circle_outline),
                     onPressed: () {
@@ -750,7 +789,7 @@ class _PitchingAnalysisScreenState extends State<PitchingAnalysisScreen> {
                       sets[i] = sets[i].copyWith(reps: sets[i].reps + 1);
                       setPlan(plan.copyWith(sets: sets));
                     },
-                  ),
+                  )),
                 ]),
                 Row(children: [
                   Expanded(

@@ -17,6 +17,7 @@ import 'plan_models.dart';
 import 'session_summary.dart';
 import 'store.dart';
 import 'widgets.dart';
+import '../widgets/stat_hold_info.dart';
 
 enum _BpMode { standard, game }
 
@@ -746,14 +747,12 @@ class _ActiveSessionViewState extends State<_ActiveSessionView> {
                     style: const TextStyle(fontSize: 12.5),
                   ),
                 ),
-                IconButton(
-                  tooltip: 'Edit pitch #${p.seq}',
+                HoldTip(message: 'Edit pitch #${p.seq}', child: IconButton(
                   visualDensity: VisualDensity.compact,
                   icon: const Icon(Icons.edit_outlined, size: 18),
                   onPressed: () => _edit(p),
-                ),
-                IconButton(
-                  tooltip: 'Delete pitch #${p.seq}',
+                )),
+                HoldTip(message: 'Delete pitch #${p.seq}', child: IconButton(
                   visualDensity: VisualDensity.compact,
                   icon: const Icon(Icons.delete_outline, size: 18, color: AppColors.colError),
                   onPressed: () async {
@@ -761,7 +760,7 @@ class _ActiveSessionViewState extends State<_ActiveSessionView> {
                       await store.deletePitch(p.id);
                     }
                   },
-                ),
+                )),
               ]),
             ),
           if (pitches.length > 30)

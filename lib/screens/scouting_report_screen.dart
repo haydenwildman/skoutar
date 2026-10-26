@@ -177,7 +177,7 @@ class _ScoutingReportBodyState extends State<_ScoutingReportBody> {
                         child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.ink),
                       )
                     : const Icon(Icons.picture_as_pdf, size: 16),
-                label: Text(_exporting ? 'Generating…' : 'Download PDF (2 pages)'),
+                label: Text(_exporting ? 'Generating…' : 'Download PDF (${sheet.cards.length + 1} pages)'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.ink,
                   side: const BorderSide(color: AppColors.ink, width: 1.5),

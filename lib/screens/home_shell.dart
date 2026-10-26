@@ -21,6 +21,7 @@ import '../bullpen/analysis_screen.dart';
 import '../bullpen/bullpen_screen.dart';
 import '../bullpen/repository.dart';
 import '../bullpen/store.dart';
+import '../widgets/stat_hold_info.dart';
 
 /// The authenticated shell of the app: persistent sidebar + a body that
 /// swaps between the feature screens, mirroring the R app's
@@ -210,11 +211,10 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
           ),
           // The explicit `leading` replaces Flutter's automatic menu
           // button, so it must open the drawer itself.
-          leading: IconButton(
+          leading: HoldTip(message: 'Menu', child: IconButton(
             icon: const Icon(Icons.menu),
-            tooltip: 'Menu',
             onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-          ),
+          )),
         ),
         // Same sidebar widget as desktop, sized to its natural width
         // (capped so it never covers the whole phone screen).

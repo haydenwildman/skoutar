@@ -9,24 +9,9 @@ import '../widgets/stat_vbox.dart';
 import '../widgets/stat_hold_info.dart';
 import '../services/color_guides.dart';
 import '../widgets/year_filter_dropdown.dart';
-import '../widgets/sequence_breakdown.dart';
 import '../services/sequence_analytics.dart';
 import '../widgets/sequence_analytics_view.dart';
 import '../widgets/count_tendencies_view.dart';
-
-const String _seqScoreWhat =
-    'Score (0-100) rates the pitch-calling DECISIONS in the at-bats that opened this way (average of each at-bat\'s score), using only logged data - no velocity or location.\n'
-    'Count management 30 + Batter matchup 25 + Setup & response 20 + Predictability 10 + Result 15. '
-    'Missing data is dropped and the other weights re-scaled, never counted as bad. Small samples are pulled toward neutral. '
-    'A hit or walk does not by itself make a sequence bad, and repeating a pitch is only penalized when the data shows it was not working.';
-
-String _seqCardGuide() => [
-      swatchLine(AppColors.colSuccess,
-          'Green card: listed under Best Sequences - the 5 sequences with the highest Score.'),
-      swatchLine(AppColors.colError,
-          'Red card: listed under Sequences to Avoid - the lowest Scores among sequences seen at least 3 times.'),
-      'The card color shows which list the sequence is in, not a fixed cutoff; the Score pill has its own cutoffs (press and hold it).',
-    ].join('\n');
 
 class PitchSequencingScreen extends StatefulWidget {
   const PitchSequencingScreen({super.key});
@@ -39,6 +24,17 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
   String _team = 'All';
   String _gameNum = 'All';
 
+  /// Hitter hand filter: 'All', 'L' or 'R'. It filters the pitch rows by the
+  /// batter hand already stored on every pitch, before any sequencing
+  /// analytic is computed, so it combines with Team, Game # and Year.
+  String _hand = 'All';
+
+  static const Map<String, String> _handLabels = {
+    'All': 'All Hitters',
+    'L': 'Left-Handed Hitters',
+    'R': 'Right-Handed Hitters',
+  };
+
   @override
   Widget build(BuildContext context) {
     final session = context.watch<AppSession>();
@@ -48,7 +44,10 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
       final gn = int.tryParse(_gameNum);
       data = data.where((p) => p.gameNumber == gn).toList();
     }
-    final seqs = StatsService.pitchSequencing(data, history: session.filteredPitches);
+    // Switch hitters are stored as their own hand value ('S'); the data does
+    // not say which side they batted from, so they are never counted as L or R.
+    final switchPitches = data.where((p) => p.hand.toUpperCase() == 'S').length;
+    if (_hand != 'All') data = data.where((p) => p.hand.toUpperCase() == _hand).toList();
     final analytics = SequenceAnalytics.build(data);
     final putAway = StatsService.putAwayPitch(data);
     final firstPitchStrike = StatsService.firstPitchStrikeByType(data);
@@ -100,27 +99,38 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
                     onChanged: (v) => setState(() => _gameNum = v!),
                   ),
                 ),
+                SizedBox(
+                  width: 200,
+                  child: StatHoldInfo(
+                    title: 'Hitter Hand',
+                    description: 'Limits every sequencing section on this page to pitches thrown to left-handed or right-handed hitters, '
+                        'using the batter hand stored on each pitch. It works together with Team, Game # and Year.\n'
+                        'Switch hitters are stored as their own hand, so they are included under All Hitters only.',
+                    child: DropdownButtonFormField<String>(
+                      isExpanded: true,
+                      value: _hand,
+                      decoration: const InputDecoration(labelText: 'Hitter Hand'),
+                      items: _handLabels.entries
+                          .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, overflow: TextOverflow.ellipsis)))
+                          .toList(),
+                      onChanged: (v) => setState(() => _hand = v ?? 'All'),
+                    ),
+                  ),
+                ),
                 const YearFilterDropdown(),
               ],
             ),
+            if (_hand != 'All' && switchPitches > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  '$switchPitches pitch${switchPitches == 1 ? '' : 'es'} to switch hitters ${switchPitches == 1 ? 'is' : 'are'} not included: '
+                  'the data does not record which side they batted from. Choose All Hitters to include them.',
+                  style: const TextStyle(fontSize: 11, color: AppColors.brandOrangeDeep, fontStyle: FontStyle.italic),
+                ),
+              ),
             const SizedBox(height: 10),
             Wrap(spacing: 10, runSpacing: 6, children: [
-              StatHoldInfo(
-                title: 'Favorable sequence',
-                description: composeHoldInfo(
-                  what: 'Green marks sequences in the Best Sequences list: the 5 highest Sequence Scores, scored on count management, batter matchup, setup and response, predictability and result.',
-                  colorGuide: _seqCardGuide(),
-                ),
-                child: const LegendChip(label: 'Best sequences (highest Score)', color: AppColors.colSuccess),
-              ),
-              StatHoldInfo(
-                title: 'Sequence to avoid',
-                description: composeHoldInfo(
-                  what: 'Red marks sequences in the Sequences to Avoid list: the lowest Sequence Scores among sequences seen at least 3 times.',
-                  colorGuide: _seqCardGuide(),
-                ),
-                child: const LegendChip(label: 'Sequence to avoid', color: AppColors.colError),
-              ),
               if (pitchTypesUsed.isNotEmpty) ...[
                 const SizedBox(width: 4),
                 const Text('Pitch colors:', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
@@ -140,76 +150,7 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
       ),
     );
 
-    final best = List<Map<String, dynamic>>.from(seqs)
-      ..sort((a, b) => (b['score'] as double).compareTo(a['score'] as double));
-    final worst = seqs.where((s) => (s['count'] as int) >= 3).toList()
-      ..sort((a, b) => (a['score'] as double).compareTo(b['score'] as double));
     final heatmap = StatsService.countHeatmap(data);
-
-    Widget seqCard(Map<String, dynamic> s, bool good) => StatHoldInfo(
-        title: 'Sequence ${s['seq']}',
-        description: composeHoldInfo(
-          what: 'The first three pitch types of a finished plate appearance, in the order thrown.\n'
-              'K% = share of those plate appearances that ended in a strikeout. '
-              'Strike% = share of the 3 pitches that were strikes. n = plate appearances it is based on (under 3 is a small sample). Weak contact = share of balls in play that were ground balls.\n'
-              'Score: ${s['score']}. $_seqScoreWhat',
-          colorGuide: _seqCardGuide(),
-        ),
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 6),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: good ? const Color(0xFFF0FDF4) : const Color(0xFFFEF2F2),
-            border: Border.all(color: good ? AppColors.colSuccess : AppColors.colError, width: 2),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Expanded(
-                  child: Text(s['seq'] as String,
-                      style: TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 15,
-                          color: good ? AppColors.perfExcellent : AppColors.colError)),
-                ),
-                const SizedBox(width: 8),
-                StatHoldInfo(
-                  title: 'Sequence Score',
-                  description: composeHoldInfo(
-                    what: '$_seqScoreWhat\n\nThis sequence: Score ${s['score']} → ${colorNameOf(perfHex('seq_score', s['score'] as double?))}.',
-                    colorGuide: statColorGuide('seq_score'),
-                  ),
-                  child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: ScaleStyle.box(perfHex('seq_score', s['score'] as double?), radius: 10, width: 1.8),
-                  child: Text('Score ${s['score']}',
-                      style: const TextStyle(color: AppColors.colText, fontSize: 11, fontWeight: FontWeight.w800)),
-                  ),
-                ),
-              ]),
-              const SizedBox(height: 2),
-              Text('K%: ${s['kPct']}%  |  Strike%: ${s['strikePct']}%  |  n=${s['count']} PA'
-                  '${s['lowSample'] == true ? ' (small sample)' : ''}'
-                  '${s['weakContactPct'] != null ? '  |  Weak contact: ${s['weakContactPct']}%' : ''}',
-                  style: const TextStyle(fontSize: 12, color: Colors.black54)),
-              Theme(
-                data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-                child: ExpansionTile(
-                  tilePadding: EdgeInsets.zero,
-                  childrenPadding: const EdgeInsets.only(bottom: 6),
-                  dense: true,
-                  title: const Text('Why this score',
-                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12.5, color: AppColors.brandOrangeDeep)),
-                  expandedCrossAxisAlignment: CrossAxisAlignment.start,
-                  children: [SequenceBreakdown(s)],
-                ),
-              ),
-            ],
-          ),
-        ),
-        );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -218,59 +159,6 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
         const SizedBox(height: 8),
         SequenceAnalyticsView(analytics: analytics),
         const SizedBox(height: 8),
-        if (seqs.isEmpty)
-          GlowCard(
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: Text(
-                'Decision-score lists (Best Sequences / Sequences to Avoid) need finished at-bats with 3+ pitches; '
-                '${analytics.diagnostics.pasWith3Plus} found in this selection. The sections above still use every at-bat that is available.',
-                style: const TextStyle(color: Colors.grey),
-              ),
-            ),
-          )
-        else
-        ResponsiveRow(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: GlowCard(
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Best Sequences by Decision Score (Top 5)', style: TextStyle(fontWeight: FontWeight.w800)),
-                      const Text('MODELED score with design-chosen weights (not validated, not a statistic). For measured results see Sequence effectiveness above. Tap "Why this score" on a card.',
-                          style: TextStyle(fontSize: 10.5, color: AppColors.colMuted, fontStyle: FontStyle.italic)),
-                      const SizedBox(height: 8),
-                      for (final s in best.take(5)) seqCard(s, true),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: GlowCard(
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Sequences to Avoid', style: TextStyle(fontWeight: FontWeight.w800)),
-                      const SizedBox(height: 8),
-                      if (worst.isEmpty)
-                        const Text('Need more data.', style: TextStyle(color: Colors.grey))
-                      else
-                        for (final s in worst.take(4)) seqCard(s, false),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
         ResponsiveRow(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -346,18 +234,18 @@ class _PitchSequencingScreenState extends State<PitchSequencingScreen> {
                   title: 'Count Tendencies',
                   description: composeHoldInfo(
                     what: 'A grid of squares: one column per count (balls-strikes) that has recorded pitches, one row per pitch type, plus an ALL row. '
-                        'Each square has three strips, top to bottom: USAGE % with N (that pitch type\'s share of ALL pitches thrown at the count, and how many pitches that is), '
-                        'STRIKE % (how often that pitch was a strike, with strikes/N) and BAA (batting average against, with hits/AB).\n'
+                        'Each square has three strips, top to bottom: USAGE % with the number of pitches (that pitch type\'s share of ALL pitches thrown at the count, and how many pitches that is), '
+                        'STRIKE % (how often that pitch was a strike, with strikes/pitches) and BAA (batting average against, with hits/at-bats).\n'
                         'BAA credits an at-bat only to the pitch that ended it, counts official at-bats only (no walks or hit-by-pitches) and is a dash when none ended there. '
                         'The ALL row combines every pitch type at the count. A dash square means that pitch was never thrown at that count.',
                     colorGuide: 'Usage is not graded: using a pitch more or less often is not good or bad by itself, so its strip has no performance color. '
-                        'Strike % and BAA use a bright border with a duller fill of the same color, green (favorable) to red (unfavorable), each with its own cutoffs. Hover or press and hold a strip for its exact numbers.\n'
+                        'Strike % and BAA use a bright border with a duller fill of the same color, green (favorable) to red (unfavorable), each with its own cutoffs. Press and hold a strip for its exact numbers.\n'
                         '${swatchLine(noDataGray, 'Dash: not enough data for that stat')}',
                   ),
                   child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text('Count Tendencies', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
                     Text(
-                      'For each count and pitch: Usage % and N, then Strike % and BAA, in one square. Strike % and BAA are tinted; usage is not.',
+                      'For each count and pitch: Usage % and pitches (P), then Strike % and BAA, in one square. Strike % and BAA are tinted; usage is not.',
                       style: TextStyle(fontSize: 11, color: AppColors.colMuted, fontStyle: FontStyle.italic),
                     ),
                   ]),
