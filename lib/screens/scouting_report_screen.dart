@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:printing/printing.dart';
 import '../models/pitch_event.dart';
 import '../services/app_session.dart';
+import '../services/scouting_report_cache.dart';
 import '../services/scouting_report_data.dart';
 import '../services/scouting_report_sheet.dart';
 import '../services/scouting_pdf_service.dart';
@@ -24,21 +25,35 @@ class ScoutingReportScreen extends StatefulWidget {
 }
 
 class _ScoutingReportScreenState extends State<ScoutingReportScreen> {
-  String? _team;
-  String _gameNum = 'All';
-  bool _generated = false;
+  // The selection and the generated report live in AppSession.scoutingReport,
+  // not in this State, so they are still here after visiting another tab.
 
   @override
   Widget build(BuildContext context) {
     final session = context.watch<AppSession>();
+    final sel = session.scoutingReport;
+    // Drop a remembered opponent that no longer exists (e.g. its games were deleted).
+    if (sel.team != null && !session.knownTeams.contains(sel.team)) {
+      sel.team = null;
+      sel.gameNum = 'All';
+      sel.generated = false;
+    }
     final teams = session.knownTeams;
     final gameNums = [
       'All',
       ...session.filteredPitches
-          .where((p) => _team == null || p.game == _team)
+          .where((p) => sel.team == null || p.game == sel.team)
           .map((p) => p.gameNumber.toString())
           .toSet()
     ];
+    // A remembered game filter that the current season filter no longer has.
+    if (!gameNums.contains(sel.gameNum)) {
+      sel.gameNum = 'All';
+      sel.generated = false;
+    }
+    final selTeam = sel.team;
+    final selGame = sel.gameNum;
+    final selGenerated = sel.generated;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -54,15 +69,15 @@ class _ScoutingReportScreenState extends State<ScoutingReportScreen> {
                     width: 180,
                     child: DropdownButtonFormField<String>(
                       isExpanded: true,
-                      value: _team,
+                      value: selTeam,
                       decoration: const InputDecoration(labelText: 'Opponent'),
                       items: teams
                           .map((t) => DropdownMenuItem(value: t, child: Text(t, overflow: TextOverflow.ellipsis)))
                           .toList(),
                       onChanged: (v) => setState(() {
-                        _team = v;
-                        _gameNum = 'All';
-                        _generated = false;
+                        sel.team = v;
+                        sel.gameNum = 'All';
+                        sel.generated = false;
                       }),
                     ),
                   ),
@@ -70,18 +85,18 @@ class _ScoutingReportScreenState extends State<ScoutingReportScreen> {
                     width: 140,
                     child: DropdownButtonFormField<String>(
                       isExpanded: true,
-                      value: _gameNum,
+                      value: selGame,
                       decoration: const InputDecoration(labelText: 'Game #'),
                       items: gameNums.map((g) => DropdownMenuItem(value: g, child: Text(g, overflow: TextOverflow.ellipsis))).toList(),
                       onChanged: (v) => setState(() {
-                        _gameNum = v!;
-                        _generated = false;
+                        sel.gameNum = v!;
+                        sel.generated = false;
                       }),
                     ),
                   ),
                   const YearFilterDropdown(),
                   OrangeGlowButton(
-                    onPressed: _team == null ? null : () => setState(() => _generated = true),
+                    onPressed: selTeam == null ? null : () => setState(() => sel.generated = true),
                     child: const Text('Generate Report'),
                   ),
                 ]),
@@ -91,14 +106,15 @@ class _ScoutingReportScreenState extends State<ScoutingReportScreen> {
             ),
           ),
         ),
-        if (_generated && _team != null)
+        if (selGenerated && selTeam != null)
           Builder(builder: (context) => _ScoutingReportBody(
-                team: _team!,
+                cache: sel,
+                team: selTeam,
                 history: session.filteredPitches,
                 data: () {
-                  var data = session.filteredPitches.where((p) => p.game == _team).toList();
-                  if (_gameNum != 'All') {
-                    final gn = int.tryParse(_gameNum);
+                  var data = session.filteredPitches.where((p) => p.game == selTeam).toList();
+                  if (selGame != 'All') {
+                    final gn = int.tryParse(selGame);
                     data = data.where((p) => p.gameNumber == gn).toList();
                   }
                   return data;
@@ -118,10 +134,12 @@ class _ScoutingReportScreenState extends State<ScoutingReportScreen> {
 }
 
 class _ScoutingReportBody extends StatefulWidget {
+  final ScoutingReportCache cache;
   final String team;
   final List<PitchEvent> data;
   final List<PitchEvent> history;
-  const _ScoutingReportBody({required this.team, required this.data, required this.history});
+  const _ScoutingReportBody(
+      {required this.cache, required this.team, required this.data, required this.history});
 
   @override
   State<_ScoutingReportBody> createState() => _ScoutingReportBodyState();
@@ -149,8 +167,11 @@ class _ScoutingReportBodyState extends State<_ScoutingReportBody> {
 
   @override
   Widget build(BuildContext context) {
-    final r = ScoutingReportData.compute(widget.team, widget.data, history: widget.history);
-    final sheet = ScoutingSheet.build(r);
+    // Reused from the session cache unless the underlying data changed, so
+    // coming back from another tab does not rebuild the report.
+    final resolved = widget.cache.resolve(widget.team, widget.data, widget.history);
+    final r = resolved.report;
+    final sheet = resolved.sheet;
     final fit = ScoutingPdfService.fitFor(sheet.cards);
     final threatLevel = r.threatLevel;
     final threatColor = threatLevel == 'high'

@@ -6,11 +6,10 @@ import '../models/pitch_event.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glow.dart';
 import '../utils/responsive.dart';
-import '../widgets/stat_vbox.dart' show statValueFontSize;
 import '../widgets/baseball_field_painter.dart';
 import '../services/batter_history_service.dart';
-import '../services/stats_service.dart' show statHasScale;
-import '../widgets/tier_scale_bar.dart';
+import '../services/sequence_scoring.dart' show PaScore, SequenceScoring;
+import '../services/stats_service.dart' show perfHex;
 import '../widgets/stat_hold_info.dart';
 import '../services/color_guides.dart';
 import 'package:intl/intl.dart';
@@ -2415,9 +2414,87 @@ class _GameInputScreenState extends State<GameInputScreen> {
   //  — informational only.
   // ══════════════════════════════════════════════════════════════════
 
+  // Which Batter History areas are open. Kept in this State (not in the panels)
+  // so a panel stays open or closed while pitches are logged and the section
+  // rebuilds after every pitch.
+  bool _bhOverviewOpen = true;
+
+  // Sequence scores (the same per-plate-appearance decision score the Pitch
+  // Sequencing tab uses) are cached below,
+  // and recomputed only when a pitch is added, edited or removed.
+  Map<String, PaScore>? _bhScores;
+  int? _bhScoresKey;
+
+  Map<String, PaScore> _sequenceScoresFor(AppSession session) {
+    final season = session.currentSeason;
+    final rows = [for (final p in session.pitches) if (p.season == season) p];
+    final key = Object.hash(
+        rows.length,
+        rows.isEmpty ? null : rows.last.id,
+        Object.hashAll(rows.map((e) => Object.hash(e.id, e.pitchType, e.call, e.outcome, e.batterNumber))));
+    if (_bhScores == null || _bhScoresKey != key) {
+      _bhScores = {
+        for (final s in SequenceScoring.scoreAll(rows))
+          if (s.pitches.isNotEmpty) s.pitches.first.id: s,
+      };
+      _bhScoresKey = key;
+    }
+    return _bhScores!;
+  }
+
+  Widget _bhPanel({
+    required String title,
+    required String summary,
+    required bool open,
+    required ValueChanged<bool> onToggle,
+    required Widget child,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.colBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => onToggle(!open),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+              child: Row(children: [
+                Text(title,
+                    style: const TextStyle(
+                        fontSize: 11, fontWeight: FontWeight.w900, color: AppColors.ink, letterSpacing: 1)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(summary,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(fontSize: 11, color: AppColors.colMuted, fontWeight: FontWeight.w600)),
+                ),
+                Icon(open ? Icons.expand_less : Icons.expand_more, size: 20, color: AppColors.colMuted),
+              ]),
+            ),
+          ),
+          if (open)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              child: child,
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBatterHistorySection(AppSession session) {
     final jersey = session.committedJersey!;
     final team = session.currentOpponent;
+    // Rebuilt from the saved pitch rows on every rebuild of Game Input (that
+    // is, after every pitch, edit or undo), so nothing here can lag behind.
     final history = BatterHistoryService.build(
       allPitches: session.pitches,
       team: team,
@@ -2426,12 +2503,23 @@ class _GameInputScreenState extends State<GameInputScreen> {
       season: session.currentSeason,
     );
     final batterName = session.batterNames[jersey];
+    final current = history.currentAtBat;
+    final done = history.completedAtBats;
+    final located = history.sprayPoints.length;
+
+    final seqSummary = current != null
+        ? 'Now: ${current.pitches.map((p) => _pitchTypeLabel(p.pitchType)).join(' > ')}'
+        : (done.isEmpty ? 'No at-bats yet' : '${done.length} at-bat${done.length == 1 ? '' : 's'}');
+    final sprayMissing = [
+      for (final ab in history.atBats)
+        if (ab.ballInPlay && ab.ballInPlayPitch == null) ab,
+    ].length;
 
     return GlowCard(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               children: [
@@ -2450,187 +2538,242 @@ class _GameInputScreenState extends State<GameInputScreen> {
             const SizedBox(height: 6),
             const Divider(height: 1, thickness: 1, color: AppColors.colBorder),
             const SizedBox(height: 5),
-            // Compact one-row batter header: "#27 John Smith | Right-Handed | Batting 4th"
-            Text.rich(
-              TextSpan(
-                children: [
-                  TextSpan(
-                    text: batterName != null && batterName.isNotEmpty
-                        ? '#$jersey $batterName'
-                        : '#$jersey',
-                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: AppColors.ink),
-                  ),
-                  if (session.hand.isNotEmpty) ...[
-                    const TextSpan(text: '   |   ', style: TextStyle(color: AppColors.colBorder, fontWeight: FontWeight.w900)),
-                    TextSpan(
-                      text: _handLabel(session.hand),
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.colMuted),
-                    ),
-                  ],
-                  const TextSpan(text: '   |   ', style: TextStyle(color: AppColors.colBorder, fontWeight: FontWeight.w900)),
-                  TextSpan(
-                    text: 'Batting ${_ordinal(session.battingOrderSlot)}',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.colMuted),
-                  ),
-                  const TextSpan(text: '   |   ', style: TextStyle(color: AppColors.colBorder, fontWeight: FontWeight.w900)),
-                  TextSpan(
-                    text: history.timesFaced == 0
-                        ? '1st PA this game'
-                        : 'PA ${history.currentPlateAppearance} · faced ${history.timesFaced}x',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: AppColors.brandOrangeDeep),
-                  ),
-                ],
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-            if (!history.hasData) ...[
-              const SizedBox(height: 6),
-              const Text(
-                'First plate appearance of this game — not faced yet. '
-                'Their history shows up here the next time they come to the plate.',
-                style: TextStyle(fontSize: 12, color: AppColors.colMuted),
-              ),
-            ] else ...[
-              const SizedBox(height: 6),
-              const Divider(height: 1, thickness: 1, color: AppColors.colBorder),
-              const SizedBox(height: 5),
-              const Text('OVERALL STATS',
-                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: AppColors.colMuted, letterSpacing: 1)),
-              const SizedBox(height: 6),
-              _batterStatsGrid(history.offense),
-              const SizedBox(height: 6),
-              const Divider(height: 1, thickness: 1, color: AppColors.colBorder),
-              const SizedBox(height: 5),
-              // Last At-Bat + Previous Sequences side by side — condenses
-              // the vertical space these two related blocks used to take
-              // stacked on top of one another.
-              LayoutBuilder(builder: (context, c) {
-                final lastAtBat = Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('LAST AT-BAT',
-                        style: TextStyle(
-                            fontSize: 10, fontWeight: FontWeight.w800, color: AppColors.colMuted, letterSpacing: 1)),
-                    const SizedBox(height: 4),
-                    _atBatCard(history.lastAtBat!, history.jersey),
-                  ],
-                );
-                // Wide: the at-bat takes the room, the "Previous Sequences" tile
-                // sits beside it. Narrow (phone): stack them so the sequence
-                // chips get the full width.
-                if (c.maxWidth < 560) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      lastAtBat,
-                      const SizedBox(height: 5),
-                      _previousSequencesTile(history),
-                    ],
-                  );
-                }
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(flex: 3, child: lastAtBat),
-                    const SizedBox(width: 8),
-                    Expanded(flex: 2, child: _previousSequencesTile(history)),
-                  ],
-                );
-              }),
-              const SizedBox(height: 6),
-              const Divider(height: 1, thickness: 1, color: AppColors.colBorder),
-              const SizedBox(height: 5),
-              // Batter Tendencies + Spray Chart side by side when there's
-              // spray data; tendencies alone (full width) otherwise.
-              if (history.sprayPoints.isNotEmpty)
-                LayoutBuilder(builder: (context, c) {
-                  final tendencies = Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('BATTER TENDENCIES',
-                          style: TextStyle(
-                              fontSize: 10, fontWeight: FontWeight.w800, color: AppColors.colMuted, letterSpacing: 1)),
-                      const SizedBox(height: 6),
-                      _batterTendenciesBlock(history),
-                    ],
-                  );
-                  final spray = Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('BATTER SPRAY CHART',
-                          style: TextStyle(
-                              fontSize: 10, fontWeight: FontWeight.w800, color: AppColors.colMuted, letterSpacing: 1)),
-                      const SizedBox(height: 6),
-                      Center(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 240, maxHeight: 240),
-                          child: AspectRatio(
-                            aspectRatio: 1,
-                            child: SprayFieldSurface(sprayPoints: history.sprayPoints),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      _sprayOutcomeLegend(history.sprayPoints),
-                    ],
-                  );
-                  if (c.maxWidth < 560) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [tendencies, const SizedBox(height: 8), spray],
-                    );
-                  }
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(flex: 3, child: tendencies),
-                      const SizedBox(width: 10),
-                      Expanded(flex: 2, child: spray),
-                    ],
-                  );
-                })
-              else ...[
-                const Text('BATTER TENDENCIES',
-                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: AppColors.colMuted, letterSpacing: 1)),
-                const SizedBox(height: 6),
-                _batterTendenciesBlock(history),
+            // Header in the Scouting Report profile style: dark jersey chip,
+            // "Bats: ..." in the brand orange, plate-appearance line muted.
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 2,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+                  decoration: BoxDecoration(color: AppColors.ink, borderRadius: BorderRadius.circular(3)),
+                  child: Text('#$jersey',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18)),
+                ),
+                if (batterName != null && batterName.isNotEmpty)
+                  Text(batterName,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: AppColors.ink)),
+                if (session.hand.isNotEmpty)
+                  Text('Bats: ${_handShort(session.hand)}',
+                      style: const TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w900, color: AppColors.brandOrangeDeep)),
+                Text(
+                  'Batting ${_ordinal(session.battingOrderSlot)} · '
+                  '${history.timesFaced == 0 ? '1st PA this game' : 'PA ${history.currentPlateAppearance} · faced ${history.timesFaced}x'}',
+                  style: const TextStyle(fontSize: 12, color: AppColors.colMuted, fontWeight: FontWeight.w600),
+                ),
               ],
-            ],
+            ),
+
+            // ── 1. Batter overview and statistics ──────────────────
+            _bhPanel(
+              title: 'OVERVIEW & STATS',
+              summary: history.hasData
+                  ? '${history.offense.pa} PA · ${history.offense.hits}-${history.offense.ab}'
+                  : 'not faced yet',
+              open: _bhOverviewOpen,
+              onToggle: (v) => setState(() => _bhOverviewOpen = v),
+              child: history.hasData
+                  ? _bhProfileBody(history)
+                  : const Text(
+                      'First plate appearance of this game: not faced yet. '
+                      'Stats, pitch history and the spray chart fill in here as soon as this at-bat is finished.',
+                      style: TextStyle(fontSize: 12, color: AppColors.colMuted),
+                    ),
+            ),
+
+            // ── 2 + 3. Pitch history & sequences (left), spray chart (right) ──
+            // Always visible (no drop-downs): listed first, with the spray
+            // chart to the right of it. Stacked on narrow screens.
+            const SizedBox(height: 10),
+            LayoutBuilder(builder: (context, c) {
+              Widget heading(String title, String summary) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(children: [
+                      Text(title,
+                          style: const TextStyle(
+                              fontSize: 11, fontWeight: FontWeight.w900, color: AppColors.ink, letterSpacing: 1)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(summary,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(
+                                fontSize: 11, color: AppColors.colMuted, fontWeight: FontWeight.w600)),
+                      ),
+                    ]),
+                  );
+              final seq = Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                heading('PITCH HISTORY & SEQUENCES', seqSummary),
+                _bhSequencesBody(session, history),
+              ]);
+              final spray = Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                heading(
+                    'SPRAY CHART',
+                    located == 0
+                        ? 'no located balls in play'
+                        : '$located ball${located == 1 ? '' : 's'} in play'),
+                _bhSprayBody(history, located, sprayMissing),
+              ]);
+              if (c.maxWidth >= 640) {
+                return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Expanded(flex: 6, child: seq),
+                  const SizedBox(width: 14),
+                  Expanded(flex: 4, child: spray),
+                ]);
+              }
+              return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [seq, const SizedBox(height: 12), spray]);
+            }),
           ],
         ),
       ),
     );
   }
 
-  /// Compact "Previous Sequences" tile — sits next to Last At-Bat instead
-  /// of a full-width centered button, so the two related blocks share one
-  /// row instead of stacking.
-  Widget _previousSequencesTile(BatterHistory history) {
-    return InkWell(
-      onTap: () => _openPreviousSequences(history),
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: AppColors.tint,
-          borderRadius: BorderRadius.circular(8),
+  /// Spray chart body (chart, result legend, and the note about balls in play
+  /// with no recorded location - those are never drawn).
+  Widget _bhSprayBody(BatterHistory history, int located, int sprayMissing) {
+    if (located == 0) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Text(
+          sprayMissing > 0
+              ? 'No ball in play with a recorded location yet ($sprayMissing without a location).'
+              : 'No ball in play against this batter yet. The chart updates as soon as one is logged.',
+          style: const TextStyle(fontSize: 12, color: AppColors.colMuted),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('PREVIOUS SEQUENCES',
-                style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: AppColors.colMuted, letterSpacing: 1)),
-            const SizedBox(height: 4),
-            Text('${history.previousSequences.length}',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: AppColors.ink)),
-            const Text('at-bats · tap to view',
-                style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: AppColors.colMuted)),
-          ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 300, maxHeight: 300),
+            child: AspectRatio(
+              aspectRatio: 1,
+              child: SprayFieldSurface(sprayPoints: history.sprayPoints),
+            ),
+          ),
         ),
-      ),
+        const SizedBox(height: 6),
+        _sprayOutcomeLegend(history.sprayPoints),
+        if (sprayMissing > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              '$sprayMissing more ball${sprayMissing == 1 ? '' : 's'} in play had no location recorded and are not drawn.',
+              style: const TextStyle(fontSize: 11, color: AppColors.colMuted),
+            ),
+          ),
+      ],
     );
   }
+
+  /// The "Pitch history & sequences" area: this at-bat as it is being thrown,
+  /// every earlier at-bat in throwing order, the existing sequence score for
+  /// each finished at-bat, and the opening sequences he has seen.
+  Widget _bhSequencesBody(AppSession session, BatterHistory history) {
+    if (history.atBats.isEmpty) {
+      return const Text('No pitches have been logged to this batter yet.',
+          style: TextStyle(fontSize: 12, color: AppColors.colMuted));
+    }
+    final scores = _sequenceScoresFor(session);
+    PaScore? scoreOf(AtBatSequence ab) => ab.pitches.isEmpty ? null : scores[ab.pitches.first.id];
+
+    Widget label(String t) => Padding(
+          padding: const EdgeInsets.only(top: 8, bottom: 4),
+          child: Text(t,
+              style: const TextStyle(
+                  fontSize: 10, fontWeight: FontWeight.w800, color: AppColors.colMuted, letterSpacing: 1)),
+        );
+
+    Widget scoreLine(AtBatSequence ab) {
+      final sc = scoreOf(ab);
+      final text = (ab.finalOutcome == null)
+          ? 'Sequence score: shown when this at-bat is finished.'
+          : (sc != null && sc.score != null)
+              ? 'Sequence score: ${sc.score!.toStringAsFixed(0)} / 100'
+              : 'Sequence score: not available for this at-bat'
+                  '${sc?.unscoredReason != null ? ' (${sc!.unscoredReason})' : ''}.';
+      return Padding(
+        padding: const EdgeInsets.only(top: 3, left: 2),
+        child: Text(text, style: const TextStyle(fontSize: 11, color: AppColors.colMuted, fontWeight: FontWeight.w600)),
+      );
+    }
+
+    final current = history.currentAtBat;
+    final last = history.lastAtBat;
+    final previous = history.previousSequences;
+
+    // Opening sequences (first three pitches) of his finished at-bats that
+    // have a score - the same definition the Pitch Sequencing tab uses.
+    final openings = <String, List<double>>{};
+    for (final ab in history.completedAtBats) {
+      final sc = scoreOf(ab);
+      if (ab.pitches.length < 3 || sc == null || sc.score == null) continue;
+      final key = ab.pitches.take(3).map((p) => _pitchTypeLabel(p.pitchType)).join(' > ');
+      openings.putIfAbsent(key, () => []).add(sc.score!);
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (current != null) ...[
+          label('THIS AT-BAT (LIVE)'),
+          _atBatCard(current, history.jersey),
+        ],
+        if (last != null) ...[
+          label('LAST AT-BAT'),
+          _atBatCard(last, history.jersey),
+          scoreLine(last),
+        ],
+        if (previous.isNotEmpty) ...[
+          label('EARLIER AT-BATS THIS GAME (${previous.length})'),
+          for (final ab in previous) ...[
+            _atBatCard(ab, history.jersey),
+            scoreLine(ab),
+            const SizedBox(height: 6),
+          ],
+        ],
+        if (openings.isNotEmpty) ...[
+          label('OPENING SEQUENCES SEEN (FIRST 3 PITCHES)'),
+          for (final e in openings.entries)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 3),
+              child: Text(
+                '${e.key}  ·  ${e.value.length} plate appearance${e.value.length == 1 ? '' : 's'}'
+                '  ·  average sequence score ${(e.value.reduce((a, b) => a + b) / e.value.length).toStringAsFixed(0)}',
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.ink),
+              ),
+            ),
+          const Text(
+            'Only finished at-bats of 3 or more pitches that can be scored are listed. A single plate appearance is a note, not a pattern.',
+            style: TextStyle(fontSize: 11, color: AppColors.colMuted),
+          ),
+        ],
+        const SizedBox(height: 4),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            onPressed: previous.isEmpty ? null : () => _openPreviousSequences(history),
+            child: const Text('Open earlier at-bats in a window'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _handShort(String hand) => switch (hand) {
+        'R' => 'RHB',
+        'L' => 'LHB',
+        'S' => 'Switch',
+        _ => hand,
+      };
 
   String _handLabel(String hand) {
     if (hand == 'S') return 'Switch Hitter';
@@ -2646,117 +2789,6 @@ class _GameInputScreenState extends State<GameInputScreen> {
   }
 
   String _fmtPct(double? v) => v == null ? 'N/A' : '${v.toStringAsFixed(1)}%';
-
-  /// Overall Stats — a compact 2-row × 4-column grid (AVG/OBP/SLG/OPS,
-  /// then BB%/K%/BABIP/AB), each cell a small color-graded bar so the
-  /// value can be read at a glance rather than looked up on a scale.
-  /// Grades the BATTER's own offense (batter_* keys — the mirror image of
-  /// the pitcher-allowed AVG/OBP/SLG grading used elsewhere in the app).
-  Widget _batterStatsGrid(BatterOffenseStats o) {
-    final cells = <Widget Function()>[
-      () => _miniStatCell('AVG', _fmtRate(o.avg), o.avg, 'batter_AVG'),
-      () => _miniStatCell('OBP', _fmtRate(o.obp), o.obp, 'batter_OBP'),
-      () => _miniStatCell('SLG', _fmtRate(o.slg), o.slg, 'batter_SLG'),
-      () => _miniStatCell('OPS', _fmtRate(o.ops), o.ops, 'batter_OPS'),
-      () => _miniStatCell('BB%', _fmtPct(o.bbPct), o.bbPct, 'batter_BB_pct'),
-      () => _miniStatCell('K%', _fmtPct(o.kPct), o.kPct, 'batter_K_pct'),
-      () => _miniStatCell('BABIP', _fmtRate(o.babip), o.babip, 'batter_BABIP'),
-      () => _miniStatCell('AB', '${o.ab}', null, null),
-    ];
-    // 8 across when there is room, otherwise 4 (two rows), and 2 on very
-    // narrow panels — each cell always keeps enough width for its value.
-    return LayoutBuilder(builder: (context, c) {
-      const gap = 6.0;
-      final cols = c.maxWidth >= 640 ? 8 : (c.maxWidth >= 300 ? 4 : 2);
-      final w = (c.maxWidth - gap * (cols - 1)) / cols;
-      return Wrap(
-        spacing: gap,
-        runSpacing: gap,
-        children: [for (final cell in cells) SizedBox(width: w.floorToDouble(), child: cell())],
-      );
-    });
-  }
-
-  /// One small stat cell: label, value, and a thin tier-colored scale with a
-  /// marker at the value ([TierScaleBar], compact) - green end on the left for
-  /// lower-is-better stats, on the right for higher-is-better ones. Plain
-  /// counts (no [statKey]) render a neutral bar instead. A null [rawValue]
-  /// shows "N/A" with a faded scale and no marker.
-  Widget _miniStatCell(String label, String display, double? rawValue, String? statKey) {
-    final hasValue = display != 'N/A';
-    final scaled = statHasScale(statKey);
-    const meanings = <String, String>{
-      'AVG': 'Batting average: hits ÷ at-bats.',
-      'OBP': 'On-base percentage: how often the batter reaches base (hits + walks + hit-by-pitches ÷ plate appearances).',
-      'SLG': 'Slugging percentage: total bases ÷ at-bats, so extra-base hits count for more.',
-      'OPS': 'On-base plus slugging (OBP + SLG): a single number for overall offense.',
-      'BB%': 'Walk percentage: walks ÷ plate appearances.',
-      'K%': 'Strikeout percentage: strikeouts ÷ plate appearances.',
-      'BABIP': 'Batting average on balls in play: hits on balls put in play (not counting home runs and strikeouts).',
-      'AB': 'At-bats this batter has against you.',
-    };
-    final guide = scaled
-        ? statColorGuide(statKey!,
-            bar: true,
-            note: 'Graded from the PITCHER\'s point of view: a high AVG, OBP, SLG, OPS, BB% or BABIP is red (bad for you), and a high K% is green (good for you).')
-        : swatchLine(AppColors.brandOrangeDeep,
-            'Orange bar: a plain count. It is not a good/bad grade, so there are no cutoffs.');
-    return StatHoldInfo(
-      title: label,
-      description: composeHoldInfo(
-        what: '${meanings[label] ?? label}${hasValue ? '\nThis batter: $display.' : '\nNo data yet (N/A).'}',
-        colorGuide: guide,
-      ),
-      child: _miniStatCellBox(label, display, rawValue, statKey, hasValue, scaled),
-    );
-  }
-
-  Widget _miniStatCellBox(
-      String label, String display, double? rawValue, String? statKey, bool hasValue, bool scaled) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(7),
-        border: Border.all(color: AppColors.colBorder),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 0.3, color: AppColors.colMuted)),
-          const SizedBox(height: 0),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Text(display,
-                maxLines: 1,
-                style: TextStyle(
-                    fontSize: statValueFontSize(context, compact: true) + 4,
-                    fontWeight: FontWeight.w900,
-                    height: 1.1,
-                    color: hasValue ? AppColors.colText : AppColors.colMuted)),
-          ),
-          const SizedBox(height: 3),
-          if (scaled)
-            TierScaleBar(statKey: statKey!, rawValue: rawValue, valueText: display, compact: true)
-          else
-            ClipRRect(
-              borderRadius: BorderRadius.circular(3),
-              child: SizedBox(
-                height: 4,
-                child: Container(
-                  color: hasValue ? AppColors.brandOrangeDeep.withOpacity(0.35) : AppColors.colBorder,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
 
   /// Compact label for one pitch's result in the sequence line (same existing
   /// terminology as everywhere else; a ball in play is just "BIP").
@@ -2879,115 +2911,206 @@ class _GameInputScreenState extends State<GameInputScreen> {
     );
   }
 
-  Widget _batterTendenciesBlock(BatterHistory history) {
-    final t = history.tendencies;
-    if (!t.hasData) {
-      return const Text('Not enough data yet.', style: TextStyle(fontSize: 12, color: AppColors.colMuted));
-    }
+  // ── Batter profile (same look as a Scouting Report hitter card) ───────
+  // Only AVG / OBP / SLG are colored boxes (graded exactly as the Scouting
+  // Report grades them); every other number is plain text, and the pitch-type
+  // table uses the scouting table style (dark header, zebra rows, no heat).
 
-    // Whole-percent display ("32%") and baseball-style BAA (".250");
-    // "N/A" when there isn't a denominator yet.
-    String pct(double? v) => v == null ? 'N/A' : '${v.round()}%';
-
-    // Totals as small stat chips (value over label) so each number can be
-    // read at a glance instead of scanning a line of tiny italic text.
-    Widget total(String label, String value) => Container(
-          constraints: const BoxConstraints(minWidth: 52),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-          decoration: BoxDecoration(
-            color: AppColors.surfaceAlt,
-            border: Border.all(color: AppColors.colBorder, width: 1.5),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(value, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: AppColors.ink, height: 1.1)),
-            Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.colMuted, height: 1.1)),
-          ]),
-        );
-
-    Widget head(String text, {TextAlign align = TextAlign.center}) => Padding(
-          padding: const EdgeInsets.symmetric(vertical: 3),
-          child: Text(text.toUpperCase(),
-              textAlign: align,
-              style: const TextStyle(
-                  fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 0.5, color: AppColors.colMuted)),
-        );
-
-    Widget val(String text) => Padding(
-          padding: const EdgeInsets.symmetric(vertical: 5),
-          child: Text(text,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: AppColors.ink)),
-        );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Wrap(spacing: 6, runSpacing: 6, children: [
-          total('AB', '${t.totalAtBats}'),
-          total('Pitches', '${t.totalPitches}'),
-          total('K', '${t.strikeouts}'),
-          total('BB', '${t.walks}'),
-          total('Fouls', '${t.foulBalls}'),
-          total('BIP', '${t.ballsInPlay}'),
+  /// Fixed-height AVG / OBP / SLG box: label left, value right.
+  Widget _bhBatBox(String label, double? raw, String statKey, String meaning) {
+    final display = _fmtRate(raw);
+    final Color? tier = raw == null ? null : (ScaleStyle.isTier(perfHex(statKey, raw)) ? perfHex(statKey, raw) : null);
+    return StatHoldInfo(
+      title: label,
+      description: composeHoldInfo(
+        what: '$meaning\n${raw == null ? 'No data yet (N/A).' : 'This batter: $display.'}',
+        colorGuide: statColorGuide(statKey,
+            note: 'Graded from the PITCHER\'s point of view: a high AVG, OBP or SLG is red (bad for you).'),
+      ),
+      child: Container(
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: tier != null ? ScaleStyle.fill(tier) : AppColors.tint,
+          border: Border.all(color: tier ?? AppColors.colBorder, width: tier != null ? 1.5 : 1),
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: Row(children: [
+          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: AppColors.colMuted)),
+          const Spacer(),
+          Text(display,
+              style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                  color: raw == null ? AppColors.colMuted : AppColors.ink)),
         ]),
-        // One aligned row per pitch type; every stat is computed from this
-        // batter's pitches only (see BatterHistoryService).
-        if (t.byPitchType.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Table(
-            columnWidths: const {
-              0: FlexColumnWidth(2.2),
-              1: FlexColumnWidth(1),
-              2: FlexColumnWidth(1),
-              3: FlexColumnWidth(1),
-              4: FlexColumnWidth(1),
-            },
-            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-            border: const TableBorder(horizontalInside: BorderSide(color: AppColors.colBorder, width: 1)),
-            children: [
-              TableRow(children: [
-                head('Pitch', align: TextAlign.left),
-                head('Usage'),
-                head('Whiff'),
-                head('BAA'),
-                head('Strike'),
-              ]),
-              for (final ps in t.byPitchType)
-                TableRow(children: [
-                  StatHoldInfo(
-                    title: _pitchTypeLabel(ps.pitchType),
-                    description: composeHoldInfo(
-                      what: 'This row shows how this batter has done against one pitch type (usage %, whiff %, BAA and strike %), using only the pitches thrown to this batter.',
-                      colorGuide: pitchTypeColorGuide([ps.pitchType]),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 5),
-                      child: Row(children: [
-                        Container(
-                            width: 10,
-                            height: 10,
-                            decoration: BoxDecoration(color: AppColors.pitchColor(ps.pitchType), shape: BoxShape.circle)),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(_pitchTypeLabel(ps.pitchType),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: AppColors.ink)),
-                        ),
-                      ]),
-                    ),
-                  ),
-                  val(pct(ps.usagePct)),
-                  val(pct(ps.whiffPct)),
-                  val(_fmtRate(ps.baa)),
-                  val(pct(ps.strikePct)),
-                ]),
-            ],
-          ),
-        ],
+      ),
+    );
+  }
+
+  /// "OPS .712" style plain stat (no box, no color), with the usual
+  /// press-and-hold explanation.
+  Widget _bhPlainStat(String label, String value, String meaning) {
+    return StatHoldInfo(
+      title: label,
+      description: composeHoldInfo(what: '$meaning\n${value == 'N/A' ? 'No data yet (N/A).' : 'This batter: $value.'}'),
+      child: Text.rich(
+        TextSpan(children: [
+          TextSpan(
+              text: '$label ',
+              style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: AppColors.colMuted)),
+          TextSpan(
+              text: value,
+              style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  color: value == 'N/A' ? AppColors.colMuted : AppColors.ink)),
+        ]),
+      ),
+    );
+  }
+
+  /// Left side of the profile: the three colored boxes, then the plain stats
+  /// and totals (all from this batter's pitches / plate appearances only).
+  Widget _bhProfileStats(BatterHistory history) {
+    final o = history.offense;
+    final t = history.tendencies;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        LayoutBuilder(builder: (context, k) {
+          const gap = 6.0;
+          final w = ((k.maxWidth - gap * 2) / 3).floorToDouble();
+          return Row(children: [
+            SizedBox(
+                width: w,
+                child: _bhBatBox('AVG', o.avg, 'batter_AVG', 'Batting average: hits ÷ at-bats.')),
+            const SizedBox(width: gap),
+            SizedBox(
+                width: w,
+                child: _bhBatBox('OBP', o.obp, 'batter_OBP',
+                    'On-base percentage: (hits + walks + hit-by-pitches) ÷ (at-bats + walks + hit-by-pitches).')),
+            const SizedBox(width: gap),
+            SizedBox(
+                width: w,
+                child: _bhBatBox('SLG', o.slg, 'batter_SLG',
+                    'Slugging percentage: total bases ÷ at-bats, so extra-base hits count for more.')),
+          ]);
+        }),
+        const SizedBox(height: 8),
+        Wrap(spacing: 14, runSpacing: 4, children: [
+          _bhPlainStat('OPS', _fmtRate(o.ops), 'On-base plus slugging (OBP + SLG).'),
+          _bhPlainStat('BB%', _fmtPct(o.bbPct), 'Walk percentage: walks ÷ plate appearances.'),
+          _bhPlainStat('K%', _fmtPct(o.kPct), 'Strikeout percentage: strikeouts ÷ plate appearances.'),
+          _bhPlainStat('BABIP', _fmtRate(o.babip),
+              'Batting average on balls in play: hits on balls put in play (not counting home runs and strikeouts).'),
+        ]),
+        const SizedBox(height: 4),
+        Wrap(spacing: 14, runSpacing: 4, children: [
+          _bhPlainStat('AB', '${t.totalAtBats}', 'At-bats this batter has had against you.'),
+          _bhPlainStat('P', '${t.totalPitches}', 'Pitches thrown to this batter.'),
+          _bhPlainStat('K', '${t.strikeouts}', 'Strikeouts against you.'),
+          _bhPlainStat('BB', '${t.walks}', 'Walks.'),
+          _bhPlainStat('Fouls', '${t.foulBalls}', 'Foul balls.'),
+          _bhPlainStat('BIP', '${t.ballsInPlay}', 'Balls put in play.'),
+        ]),
       ],
     );
+  }
+
+  /// Right side of the profile: one row per pitch type in the scouting table
+  /// style (dark header, zebra rows, plain numbers).
+  Widget _bhPitchTable(BatterHistory history) {
+    final t = history.tendencies;
+    if (!t.hasData || t.byPitchType.isEmpty) {
+      return const Text('Not enough pitch data yet.', style: TextStyle(fontSize: 12, color: AppColors.colMuted));
+    }
+    String pct(double? v) => v == null ? 'N/A' : '${v.round()}%';
+
+    Widget cell(String text,
+        {bool header = false, bool left = false, Color? dot, bool bold = false, Color? bg}) {
+      return Container(
+        color: header ? AppColors.ink : bg,
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+        alignment: left ? Alignment.centerLeft : Alignment.center,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: left ? Alignment.centerLeft : Alignment.center,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            if (dot != null) ...[
+              Container(width: 9, height: 9, decoration: BoxDecoration(color: dot, shape: BoxShape.circle)),
+              const SizedBox(width: 5),
+            ],
+            Text(text,
+                maxLines: 1,
+                softWrap: false,
+                style: TextStyle(
+                    fontSize: header ? 10.5 : 12.5,
+                    fontWeight: (header || bold) ? FontWeight.w800 : FontWeight.w600,
+                    color: header ? Colors.white : AppColors.colText)),
+          ]),
+        ),
+      );
+    }
+
+    return StatHoldInfo(
+      title: 'By pitch type',
+      description: composeHoldInfo(
+        what: 'How this batter has done against each pitch type, using only the pitches thrown to this batter: '
+            'Use = share of his pitches, Whiff = misses ÷ swings, BAA = hits ÷ at-bats ended on that pitch, Strike = strikes ÷ pitches.',
+      ),
+      child: Table(
+        border: TableBorder.all(color: AppColors.colBorder, width: 0.6),
+        columnWidths: const {
+          0: FlexColumnWidth(2.2),
+          1: FlexColumnWidth(1),
+          2: FlexColumnWidth(1),
+          3: FlexColumnWidth(1),
+          4: FlexColumnWidth(1),
+        },
+        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+        children: [
+          TableRow(children: [
+            cell('Pitch', header: true, left: true),
+            cell('Use', header: true),
+            cell('Whiff', header: true),
+            cell('BAA', header: true),
+            cell('Strike', header: true),
+          ]),
+          for (var i = 0; i < t.byPitchType.length; i++)
+            () {
+              final ps = t.byPitchType[i];
+              final bg = i.isOdd ? AppColors.surfaceAlt : null;
+              return TableRow(children: [
+                cell(_pitchTypeLabel(ps.pitchType),
+                    left: true, bold: true, dot: AppColors.pitchColor(ps.pitchType), bg: bg),
+                cell(pct(ps.usagePct), bg: bg),
+                cell(pct(ps.whiffPct), bg: bg),
+                cell(_fmtRate(ps.baa), bg: bg),
+                cell(pct(ps.strikePct), bg: bg),
+              ]);
+            }(),
+        ],
+      ),
+    );
+  }
+
+  /// Overview panel body: stats beside the pitch table when there is room,
+  /// stacked on narrow screens (never wider than its panel).
+  Widget _bhProfileBody(BatterHistory history) {
+    return LayoutBuilder(builder: (context, c) {
+      final stats = _bhProfileStats(history);
+      final table = _bhPitchTable(history);
+      if (c.maxWidth >= 560) {
+        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(flex: 5, child: stats),
+          const SizedBox(width: 12),
+          Expanded(flex: 6, child: table),
+        ]);
+      }
+      return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch, children: [stats, const SizedBox(height: 8), table]);
+    });
   }
 
   /// Compact colored-dot legend for the spray chart — one entry per

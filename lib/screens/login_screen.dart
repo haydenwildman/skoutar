@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/app_session.dart';
 import '../services/auth_service.dart';
+import '../services/remembered_account_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/auth_shell.dart';
 import '../widgets/orange_glow_button.dart';
@@ -20,13 +21,58 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
+  final _emailFocus = FocusNode();
+  final _passFocus = FocusNode();
   String? _error;
   bool _loading = false;
+
+  /// The account that last signed in on this device (email only), if any.
+  String? _remembered;
+
+  /// Keep this account as the default next time. Untick on a shared device.
+  bool _rememberDevice = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRemembered();
+  }
+
+  /// Pre-fills the last account. It never signs anyone in: the password is
+  /// still required, so focus goes straight to the password field.
+  Future<void> _loadRemembered() async {
+    final email = await RememberedAccountService.load();
+    if (!mounted || email == null) return;
+    if (_emailCtrl.text.trim().isEmpty) {
+      setState(() {
+        _remembered = email;
+        _emailCtrl.text = email;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _passFocus.requestFocus();
+      });
+    }
+  }
+
+  /// "Not you?": forget the saved account and start with an empty form.
+  Future<void> _useDifferentAccount() async {
+    await RememberedAccountService.clear();
+    if (!mounted) return;
+    setState(() {
+      _remembered = null;
+      _emailCtrl.clear();
+      _passCtrl.clear();
+      _error = null;
+    });
+    _emailFocus.requestFocus();
+  }
 
   @override
   void dispose() {
     _emailCtrl.dispose();
     _passCtrl.dispose();
+    _emailFocus.dispose();
+    _passFocus.dispose();
     super.dispose();
   }
 
@@ -58,6 +104,14 @@ class _LoginScreenState extends State<LoginScreen> {
             'the latest database update (supabase_pitchers_migration.sql) may not be installed yet.');
         return;
       }
+      // Signed in and data loaded: remember this account (or forget the
+      // previous one when "remember" is unticked). A different user logging in
+      // simply replaces the remembered email.
+      if (_rememberDevice) {
+        await RememberedAccountService.save(_emailCtrl.text);
+      } else {
+        await RememberedAccountService.clear();
+      }
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const HomeShell()),
@@ -87,18 +141,53 @@ class _LoginScreenState extends State<LoginScreen> {
               style: TextStyle(color: Colors.grey, fontSize: 13)),
           const SizedBox(height: 20),
           if (_error != null) AuthMessage(text: _error!),
+          if (_remembered != null) ...[
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Last signed in on this device: $_remembered',
+                  style: const TextStyle(fontSize: 12, color: AppColors.colMuted)),
+            ),
+            const SizedBox(height: 6),
+          ],
           TextField(
             controller: _emailCtrl,
+            focusNode: _emailFocus,
             keyboardType: TextInputType.emailAddress,
             textInputAction: TextInputAction.next,
             autofillHints: const [AutofillHints.email],
+            onChanged: (v) {
+              // Typing a different address means a different account.
+              if (_remembered != null && v.trim().toLowerCase() != _remembered) {
+                setState(() => _remembered = null);
+              }
+            },
             decoration: const InputDecoration(labelText: 'Email', hintText: 'you@example.com'),
           ),
+          if (_remembered != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: _loading ? null : _useDifferentAccount,
+                child: const Text('Not you? Use a different account'),
+              ),
+            ),
           const SizedBox(height: 12),
           PasswordField(
             controller: _passCtrl,
+            focusNode: _passFocus,
             textInputAction: TextInputAction.done,
             onSubmitted: (_) => _doLogin(),
+          ),
+          CheckboxListTile(
+            value: _rememberDevice,
+            onChanged: _loading ? null : (v) => setState(() => _rememberDevice = v ?? true),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            title: const Text('Remember my email on this device',
+                style: TextStyle(fontSize: 12.5)),
+            subtitle: const Text('Your password is never saved. Untick on a shared computer.',
+                style: TextStyle(fontSize: 11)),
           ),
           Align(
             alignment: Alignment.centerRight,

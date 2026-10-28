@@ -9,6 +9,8 @@ import '../theme/app_theme.dart';
 import 'auth_service.dart';
 import 'pitcher_service.dart';
 import 'storage_service.dart';
+import 'scouting_report_cache.dart';
+import 'remembered_account_service.dart';
 
 /// ══════════════════════════════════════════════════════════════
 /// APP SESSION
@@ -147,6 +149,10 @@ class AppSession extends ChangeNotifier {
 
   AppUser? currentUser;
   List<PitchEvent> pitches = [];
+
+  /// The Scouting Report screen's selection and computed report, kept here so
+  /// they survive switching tabs (the screen itself is rebuilt on every switch).
+  final ScoutingReportCache scoutingReport = ScoutingReportCache();
 
   // ── Live game-input state machine (mirrors R's `gs` reactiveValues) ──
   String currentOpponent = '';
@@ -553,12 +559,21 @@ class AppSession extends ChangeNotifier {
       } catch (_) {}
     }
     pitchers = list;
-    final keepId = keepActive ? activePitcher?.id : null;
+    // Keep the current pitcher if there is one; on a fresh sign-in / app
+    // start, reopen the pitcher who was active last on this device (only if
+    // that profile still exists under this account), else the first one.
+    final keepId = keepActive
+        ? activePitcher?.id
+        : await RememberedAccountService.loadActivePitcher(currentUser?.id ?? '');
     Pitcher? next;
     for (final p in list) {
       if (p.id == keepId) next = p;
     }
     activePitcher = next ?? (list.isNotEmpty ? list.first : null);
+    final chosen = activePitcher;
+    if (chosen != null) {
+      await RememberedAccountService.saveActivePitcher(currentUser?.id ?? '', chosen.id);
+    }
     notifyListeners();
   }
 
@@ -566,6 +581,7 @@ class AppSession extends ChangeNotifier {
   /// whatever was in memory (nothing from another pitcher is kept).
   Future<void> _loadActivePitcherData() async {
     final id = activePitcherId;
+    scoutingReport.reset(); // another pitcher's report must never be shown
     pitches = await storage.loadPitchesForUser(id);
     customPitchTypes = await storage.loadCustomPitchTypes(id);
     hiddenBuiltInPitchTypes = await storage.loadHiddenBuiltInPitchTypes(id);
@@ -593,6 +609,8 @@ class AppSession extends ChangeNotifier {
     notifyListeners();
     try {
       activePitcher = p;
+      // Remember this as the last active pitcher so reopening the app lands here.
+      await RememberedAccountService.saveActivePitcher(currentUser?.id ?? '', p.id);
       pitches = []; // never show or save the previous pitcher's data
       await _loadActivePitcherData();
       onActivePitcherChanged?.call();
@@ -608,6 +626,7 @@ class AppSession extends ChangeNotifier {
   Future<void> logout() async {
     await flushPendingWrites();
     await auth.logout();
+    scoutingReport.reset();
     currentUser = null;
     pitchers = [];
     activePitcher = null;

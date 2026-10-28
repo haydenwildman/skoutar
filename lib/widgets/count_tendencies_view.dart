@@ -184,9 +184,21 @@ class CountTendenciesView extends StatelessWidget {
                 sub: ab > 0 ? '$hits/$ab' : null,
                 tier: baa == null ? null : perfHex('AVG', baa),
                 title: 'BAA · $where',
-                what: 'Batting average against: hits ÷ official at-bats that ENDED on ${isAll ? 'a pitch' : 'this pitch'} '
-                    'thrown at $count (each at-bat is credited only to the pitch that ended it; walks and hit-by-pitch are not at-bats). '
-                    '${ab > 0 ? '$hits hit${hits == 1 ? '' : 's'} in $ab at-bat${ab == 1 ? '' : 's'}. Lower is better.' : 'No at-bat has ended on it here yet, so BAA is unavailable (a dash), not .000.'}',
+                what: 'Batting average against = hits ÷ official at-bats (H ÷ AB), counting only at-bats that ENDED on '
+                    '${isAll ? 'a pitch (any type)' : 'a $who'} thrown when the count was $count.\n\n'
+                    'Which count: the count is balls-strikes BEFORE the pitch is thrown. Only the pitch that ends a plate appearance '
+                    'can add to BAA, and it is credited to the count that pitch was thrown at (for example, a single on a 1-2 pitch '
+                    'belongs to 1-2, not to the 0-0 pitch that started the at-bat). Earlier pitches of the same at-bat add nothing here. '
+                    'This is not every plate appearance that ever passed through $count: only those that finished on a pitch thrown at $count. '
+                    '${isAll ? '' : 'In this box it is also limited to $who as the finishing pitch. '}'
+                    'An at-bat still in progress has no result yet and is not counted.\n\n'
+                    'Hits (numerator): single, double, triple, home run.\n'
+                    'At-bats (denominator): every finished plate appearance except a walk or hit-by-pitch. '
+                    'That includes hits, strikeouts (swinging, looking, dropped third strike), ground/fly/line outs, double plays, '
+                    "fielder's choices and errors (an error is an at-bat, not a hit).\n"
+                    'Not at-bats: walks and hit-by-pitches (they do not lower BAA). SKOUTAR has no separate sacrifice-fly result, '
+                    'so a fly out is logged and counted as a normal at-bat.\n\n'
+                    '${ab > 0 ? 'Here: $hits hit${hits == 1 ? '' : 's'} in $ab at-bat${ab == 1 ? '' : 's'}. Lower is better.' : 'No at-bat has ended here yet, so BAA is a dash, not .000.'}',
                 guide: statColorGuide('AVG'),
               ),
             ),

@@ -3,6 +3,7 @@ import '../services/scouting_pdf_service.dart' show ScoutingPdfFit;
 import '../utils/responsive.dart';
 import '../services/scouting_report_sheet.dart';
 import '../theme/app_theme.dart';
+import 'baseball_field_painter.dart' show SprayFieldSurface;
 import 'glow.dart';
 
 /// The Scouting Report: a team-overview page followed by ONE individual
@@ -131,7 +132,8 @@ Widget _gapBox([double h = 10]) => SizedBox(height: h);
 
 /// One heat-map-aware table. A tier color becomes the app's own washed fill
 /// ([ScaleStyle.fill]); the number is always dark text on top of it.
-Widget _table(SheetTable t, {double font = 12, String empty = 'No data recorded', bool phone = false}) {
+Widget _table(SheetTable t,
+    {double font = 12, String empty = 'No data recorded', bool phone = false, bool heat = true}) {
   if (phone && font > 10.5) font = 10.5;
   if (t.rows.isEmpty) {
     return Container(
@@ -143,7 +145,7 @@ Widget _table(SheetTable t, {double font = 12, String empty = 'No data recorded'
   Widget cell(SheetCell c, {bool header = false}) {
     final tier = c.tier;
     return Container(
-      color: header ? AppColors.ink : (tier != null ? ScaleStyle.fill(tier) : null),
+      color: header ? AppColors.ink : ((heat && tier != null) ? ScaleStyle.fill(tier) : null),
       padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
       alignment: c.left ? Alignment.centerLeft : Alignment.center,
       child: FittedBox(
@@ -355,10 +357,14 @@ class _HitterPage extends StatelessWidget {
           'AVG/OBP/SLG are the hitter\'s numbers against this pitcher; heat is from the pitcher\'s view. '
           'Pitch rows: P = pitches, Use = share of that hitter\'s pitches, H-AB/AVG = at-bats ended on that pitch, Wh/Sw = misses over swings. '
           'Count rows: P/Sw/Whiff = every pitch in that count; PA, H-AB, K, BB, AVG = at-bats that ended there. '
-          'Ahead / Even / Behind are exclusive; * two strikes overlaps them.',
+          'Ahead / Even / Behind are exclusive; * two strikes overlaps them. '
+          'Pitch sequencing: each finished at-bat with its pitches in the order they were thrown.',
           style: _muted),
       _gapBox(4),
-      const _HeatLegend(),
+      const Text(
+          'Only AVG, OBP and SLG are colored (the SKOUTAR scale, graded from the pitcher\'s view; cream = no data). '
+          'Every other number is plain, with its sample always printed. Results are credited to the pitch that ended the plate appearance.',
+          style: _muted),
     ]);
   }
 }
@@ -404,10 +410,18 @@ class _HitterCardView extends StatelessWidget {
         }),
         const SizedBox(height: 10),
         _section('By pitch type'),
-        _table(c.pitchTable, font: 12, empty: 'No pitches recorded', phone: phone),
+        _table(c.pitchTable, font: 12, empty: 'No pitches recorded', phone: phone, heat: false),
         const SizedBox(height: 10),
         _section('By count'),
-        _table(c.countTable, font: 12, phone: phone),
+        _table(c.countTable, font: 12, phone: phone, heat: false),
+        const SizedBox(height: 10),
+        _section('Pitch sequencing', note: 'this hitter only'),
+        Text(c.sequenceNote, style: _muted),
+        const SizedBox(height: 4),
+        _table(c.paTable, font: 12, empty: 'No finished plate appearances recorded', phone: phone, heat: false),
+        const SizedBox(height: 10),
+        _section('Spray chart', note: 'balls in play with a recorded location'),
+        _HitterSpray(c, phone: phone),
         const SizedBox(height: 10),
         for (final n in c.notes)
           Padding(
@@ -448,5 +462,61 @@ class _HitterCardView extends StatelessWidget {
         Text(m.value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: AppColors.ink)),
       ]),
     );
+  }
+}
+
+
+/// One hitter's spray chart, drawn with the same field surface and coordinate
+/// system as the Spray Chart tab. Same size for every hitter; a hitter with no
+/// located ball in play gets a clear empty message instead of a blank field.
+class _HitterSpray extends StatelessWidget {
+  final HitterCard c;
+  final bool phone;
+  const _HitterSpray(this.c, {this.phone = false});
+
+  @override
+  Widget build(BuildContext context) {
+    const side = 240.0;
+    final pts = c.sprayPoints;
+    final missing = c.sprayMissing;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Center(
+        child: SizedBox(
+          width: phone ? double.infinity : side,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: side),
+            child: AspectRatio(
+              aspectRatio: 1,
+              child: pts.isEmpty
+                  ? Container(
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.tint,
+                        border: Border.all(color: AppColors.colBorder),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text(
+                        'No ball in play with a recorded location for this hitter yet.',
+                        textAlign: TextAlign.center,
+                        style: _muted,
+                      ),
+                    )
+                  : SprayFieldSurface(sprayPoints: pts),
+            ),
+          ),
+        ),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        pts.isEmpty
+            ? (missing > 0 ? '$missing ball${missing == 1 ? '' : 's'} in play had no location recorded.' : '')
+            : 'Balls in play plotted: ${pts.length}.'
+                '${missing > 0 ? ' $missing more had no location recorded and are not drawn.' : ''}'
+                ' Dot fill = result, ring = pitch hit; dotted line = ground ball, straight = line drive, arc = fly ball.',
+        textAlign: TextAlign.center,
+        style: _muted,
+      ),
+    ]);
   }
 }

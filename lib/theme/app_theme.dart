@@ -33,8 +33,12 @@ class AppFonts {
 
 class AppColors {
   // Performance tiers (used to color-code stat boxes / tables)
-  static const Color perfExcellent = Color(0xFF15803D);
-  static const Color perfGood = Color(0xFF4ADE80);
+  // Dark green: a deeper forest green. Light green: a clearly lighter,
+  // brighter lime-leaning green. They also get different interior washes in
+  // [ScaleStyle.fillAny] so the two cells read as two different greens even
+  // when they sit next to each other (they used to wash to almost the same fill).
+  static const Color perfExcellent = Color(0xFF0F6B32);
+  static const Color perfGood = Color(0xFF8BE04E);
   static const Color perfAverage = Color(0xFFFACC15);
   static const Color perfBelowAvg = Color(0xFFFB923C);
   static const Color perfPoor = Color(0xFFDC2626);
@@ -284,6 +288,15 @@ class ScaleStyle {
   /// consistent mid-light value so dark text stays readable on every tier.
   static Color fillAny(Color c) {
     final hsl = HSLColor.fromColor(c);
+    // The two greens get their own interior lightness: a noticeably deeper
+    // fill for dark green and a bright pale fill for light green. Dark text
+    // (colText) still has comfortable contrast on both.
+    if (c == AppColors.perfExcellent) {
+      return hsl.withSaturation(0.52).withLightness(0.55).toColor();
+    }
+    if (c == AppColors.perfGood) {
+      return hsl.withSaturation(0.70).withLightness(0.80).toColor();
+    }
     return hsl
         .withSaturation((hsl.saturation * 0.55).clamp(0.0, 1.0))
         .withLightness(0.80)

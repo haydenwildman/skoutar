@@ -1,4 +1,5 @@
 import 'dart:ui' show Color;
+import '../models/pitch_event.dart';
 import '../theme/app_theme.dart' show ScaleStyle;
 import 'scouting_game_plan.dart';
 import 'scouting_report_data.dart';
@@ -76,6 +77,18 @@ class HitterCard {
   final SheetTable countTable;
   final List<SheetNote> notes;
   final String conf;
+
+  /// Pitch Sequencing for THIS hitter only: [paTable] lists his plate
+  /// appearances with every pitch in the order it was thrown. [sequenceNote]
+  /// states the sample behind it.
+  final SheetTable paTable;
+  final String sequenceNote;
+
+  /// Spray chart for THIS hitter: only balls in play that have a recorded
+  /// field location. [sprayMissing] counts balls in play with no location
+  /// (reported, never drawn).
+  final List<PitchEvent> sprayPoints;
+  final int sprayMissing;
   const HitterCard({
     required this.jersey,
     required this.hand,
@@ -90,6 +103,10 @@ class HitterCard {
     required this.countTable,
     required this.notes,
     required this.conf,
+    required this.paTable,
+    required this.sequenceNote,
+    required this.sprayPoints,
+    required this.sprayMissing,
   });
 }
 
@@ -337,6 +354,38 @@ class ScoutingSheet {
       ]);
     }
 
+    // ── Pitch sequencing + spray chart (this hitter only) ──────────────
+    final finished = [for (final ab in h.atBats) if (ab.outcome != null) ab];
+    final recent = finished.length > maxPaRows ? finished.sublist(finished.length - maxPaRows) : finished;
+    final paRows = <List<SheetCell>>[];
+    for (final ab in recent) {
+      paRows.add([
+        SheetCell('G${ab.gameNumber}', bold: true, left: true),
+        SheetCell(ab.pitches.map((p) => upperType(p.type)).join(' > '), left: true),
+        SheetCell('${ab.pitches.length}'),
+        SheetCell(_outcomeShort(ab.outcome), left: true),
+      ]);
+    }
+    final paTable = SheetTable(
+      ['Game', 'Pitches in throwing order', 'Pitches', 'Result'],
+      paRows,
+      [1.0, 5.2, 1.2, 2.4],
+    );
+    final hiddenPa = finished.length - recent.length;
+    final sequenceNote = finished.isEmpty
+        ? 'No finished plate appearances recorded for this hitter.'
+        : 'Finished plate appearances: ${finished.length}.'
+            '${hiddenPa > 0 ? ' Showing the latest $maxPaRows.' : ''}';
+
+    final sprayPoints = <PitchEvent>[
+      for (final ab in h.atBats)
+        if (ab.bipPitch != null) ab.bipPitch!,
+    ];
+    final sprayMissing = [
+      for (final ab in h.atBats)
+        if (ab.bipPitch == null && ab.pitches.any((p) => p.call == 'ip')) ab,
+    ].length;
+
     return HitterCard(
       jersey: h.jersey,
       hand: _hand(h.hand),
@@ -352,8 +401,35 @@ class ScoutingSheet {
       countTable: SheetTable(_countHeaders, _countRows(h.byCount, h), _countFlex),
       notes: _notes(h),
       conf: _confShort(confFor(h.pa, 2, 6)),
+      paTable: paTable,
+      sequenceNote: sequenceNote,
+      sprayPoints: sprayPoints,
+      sprayMissing: sprayMissing,
     );
   }
+
+  /// Rows shown in a hitter's sequencing tables (the rest are counted in the note).
+  static const int maxPaRows = 8;
+
+  static String _outcomeShort(String? o) => switch (o) {
+        '1b' => 'Single',
+        '2b' => 'Double',
+        '3b' => 'Triple',
+        'hr' => 'Home run',
+        'go' => 'Groundout',
+        'fo' => 'Flyout',
+        'lo' => 'Lineout',
+        'dp' => 'Double play',
+        'fc' => "Fielder's choice",
+        'e' => 'Error',
+        'bb' => 'Walk',
+        'hbp' => 'HBP',
+        'k' => 'K swinging',
+        'kl' => 'K looking',
+        'dk3' => 'K dropped 3rd',
+        null => 'In progress',
+        _ => o.toUpperCase(),
+      };
 
   /// Weakness / approach / caution, taken from the notes the game-plan
   /// builder already wrote for this hitter (shortened to the first sentence),

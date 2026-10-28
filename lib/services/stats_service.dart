@@ -1060,12 +1060,21 @@ class StatsService {
   static List<Map<String, dynamic>> gameLog(List<PitchEvent> data) {
     final games = groupBy(data, (PitchEvent e) => '${e.game}|${e.gameNumber}');
     final rows = <Map<String, dynamic>>[];
-    // preserve chronological order of first appearance
-    final orderedKeys = <String>[];
-    for (final e in data) {
-      final key = '${e.game}|${e.gameNumber}';
-      if (!orderedKeys.contains(key)) orderedKeys.add(key);
-    }
+    // Chronological order, oldest game first / newest game last, using each
+    // game's real date (its earliest event timestamp) - never the opponent
+    // name. Ties (two games logged on the same moment/date) fall back to the
+    // game number and then the opponent name so the order is always stable.
+    final orderedKeys = games.keys.toList();
+    DateTime firstTs(String k) =>
+        games[k]!.map((e) => e.timestamp).reduce((a, b) => a.isBefore(b) ? a : b);
+    orderedKeys.sort((a, b) {
+      final byTime = firstTs(a).compareTo(firstTs(b));
+      if (byTime != 0) return byTime;
+      final ga = games[a]!.first, gb = games[b]!.first;
+      final byNum = ga.gameNumber.compareTo(gb.gameNumber);
+      if (byNum != 0) return byNum;
+      return ga.game.toLowerCase().compareTo(gb.game.toLowerCase());
+    });
     for (final key in orderedKeys) {
       final gameData = games[key]!;
       final opponent = gameData.first.game;

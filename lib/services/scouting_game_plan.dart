@@ -117,6 +117,10 @@ class AtBatLine {
   final String? outcome; // final plate-appearance result (null = unfinished)
   final double? seqScore; // Pitch Sequencing score, if scoreable
   final int order; // chronological index in this report's data
+  /// The pitch that was put in play WITH a recorded field location, if any.
+  /// Used for the hitter's spray chart; null when the PA did not end on a
+  /// located ball in play (nothing is ever invented for it).
+  final PitchEvent? bipPitch;
   const AtBatLine({
     required this.gameNumber,
     required this.season,
@@ -128,6 +132,7 @@ class AtBatLine {
     required this.outcome,
     required this.seqScore,
     required this.order,
+    this.bipPitch,
   });
 }
 
@@ -490,6 +495,12 @@ class ScoutingGamePlanBuilder {
         outcome: completed ? last.outcome : null,
         seqScore: scoreByKey[paKey]?.score,
         order: order++,
+        bipPitch: () {
+          for (final e in pa) {
+            if (e.call == 'ip' && e.xCoord != null && e.yCoord != null) return e;
+          }
+          return null;
+        }(),
       ));
 
       // pitch-level tallies (hitter, team, count buckets)

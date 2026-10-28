@@ -5,6 +5,7 @@ import 'services/storage_service.dart';
 import 'services/auth_service.dart';
 import 'services/app_session.dart';
 import 'services/supabase_config.dart';
+import 'services/remembered_account_service.dart';
 import 'theme/app_theme.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_shell.dart';
@@ -28,6 +29,9 @@ Future<void> main() async {
   if (restoredUser != null) {
     try {
       await session.login(restoredUser);
+      // This device is signed in as this account, so it is the one the login
+      // screen should offer after the next sign-out.
+      await RememberedAccountService.save(restoredUser.email);
     } catch (_) {
       // Data couldn't be loaded (e.g. the latest database update isn't
       // installed yet): fall back to the login screen instead of a blank app.

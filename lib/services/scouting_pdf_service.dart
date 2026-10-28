@@ -1,9 +1,11 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' show Color;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import '../theme/app_theme.dart' show ScaleStyle;
+import '../models/pitch_event.dart';
+import '../theme/app_theme.dart' show AppColors, ScaleStyle;
 import 'scouting_game_plan.dart' show GpConfig;
 import 'scouting_report_data.dart';
 import 'scouting_report_sheet.dart';
@@ -18,7 +20,7 @@ class _C {
   static final text = PdfColor.fromInt(0xFF1C1917);
   static final muted = PdfColor.fromInt(0xFF78716C);
   static final border = PdfColor.fromInt(0xFFE7DCCF);
-  static final perfExcellent = PdfColor.fromInt(0xFF15803D);
+  static final perfExcellent = PdfColor.fromInt(0xFF0F6B32);
   static final perfAverage = PdfColor.fromInt(0xFFFACC15);
   static final perfPoor = PdfColor.fromInt(0xFFDC2626);
 
@@ -94,6 +96,17 @@ class ScoutingPdfService {
       logo = null;
     }
 
+    // The same branded field photo the in-app spray chart uses (dots are
+    // placed with the same field coordinate system). If it cannot be read the
+    // chart falls back to a plain green field so export never fails.
+    pw.MemoryImage? field;
+    try {
+      final bytes = await rootBundle.load('assets/images/field_bg.png');
+      field = pw.MemoryImage(bytes.buffer.asUint8List());
+    } catch (_) {
+      field = null;
+    }
+
     final sheet = ScoutingSheet.build(r);
     final fit = fitFor(sheet.cards);
     final doc = pw.Document(theme: theme);
@@ -117,7 +130,7 @@ class ScoutingPdfService {
       doc.addPage(pw.Page(
         pageFormat: PdfPageFormat.letter,
         margin: margin,
-        build: (ctx) => _pageShell(logo, sheet, i + 2, pageCount, _hitterPage(card)),
+        build: (ctx) => _pageShell(logo, sheet, i + 2, pageCount, _hitterPage(card, field)),
       ));
     }
     return doc.save();
@@ -216,7 +229,7 @@ class ScoutingPdfService {
   // ───────────────────────── tables ─────────────────────────
 
   static pw.Widget _table(SheetTable t, double width,
-      {double font = _fBody, double rowH = _rowP1, double headH = _headP1, int minRows = 0, String empty = 'No data recorded'}) {
+      {double font = _fBody, double rowH = _rowP1, double headH = _headP1, int minRows = 0, String empty = 'No data recorded', bool heat = true}) {
     final total = t.flex.fold<double>(0, (a, b) => a + b);
     final widths = [for (final f in t.flex) width * f / total];
 
@@ -249,7 +262,7 @@ class ScoutingPdfService {
       rows.add(pw.Row(children: [
         for (var i = 0; i < row.length; i++)
           cell(row[i].text, widths[i], rowH,
-              bg: row[i].tier != null ? _C.wash(row[i].tier!) : zebra,
+              bg: (heat && row[i].tier != null) ? _C.wash(row[i].tier!) : zebra,
               color: row[i].muted ? _C.muted : _C.text,
               bold: row[i].bold,
               left: row[i].left),
@@ -491,7 +504,7 @@ class ScoutingPdfService {
 
   /// A full-page individual card. Nothing is capped or clipped: every pitch
   /// type, every count row and every note for THIS hitter is printed.
-  static pw.Widget _hitterPage(HitterCard c) {
+  static pw.Widget _hitterPage(HitterCard c, pw.MemoryImage? field) {
     final inner = _w - 12;
     final metricW = (inner - 12) / 3;
     return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
@@ -530,17 +543,19 @@ class ScoutingPdfService {
             ]),
           ),
           pw.SizedBox(height: 4),
-          _t('AVG/OBP/SLG are this hitter\'s numbers against this pitcher; heat is from the pitcher\'s view.', 7, color: _C.muted),
+          _t('AVG/OBP/SLG are this hitter\'s numbers against this pitcher; heat is from the pitcher\'s view. Only these three boxes are colored.', 7, color: _C.muted),
           pw.SizedBox(height: 6),
           _heading('By pitch type',
               note: 'P = pitches, Use = share of his pitches, H-AB/AVG = at-bats ended on that pitch, Wh/Sw = misses over swings'),
           pw.SizedBox(height: 2),
-          _table(c.pitchTable, inner, font: _fFull, rowH: _rowFull, headH: _headFull, empty: 'No pitches recorded'),
+          _table(c.pitchTable, inner, font: _fFull, rowH: _rowFull, headH: _headFull, empty: 'No pitches recorded', heat: false),
           pw.SizedBox(height: 8),
           _heading('By count',
               note: 'P/Sw/Whiff = every pitch in that count; PA, H-AB, K, BB, AVG = at-bats that ended there'),
           pw.SizedBox(height: 2),
-          _table(c.countTable, inner, font: _fFull, rowH: _rowFull, headH: _headFull),
+          _table(c.countTable, inner, font: _fFull, rowH: _rowFull, headH: _headFull, heat: false),
+          pw.SizedBox(height: 8),
+          _sequencingAndSpray(c, inner, field),
           pw.SizedBox(height: 8),
           for (final n in c.notes) ...[
             _fullNote(n, inner),
@@ -550,6 +565,160 @@ class ScoutingPdfService {
       ),
     ]);
   }
+
+  // ── Pitch Sequencing + Spray Chart (this hitter only) ───────────────
+  static const double _sprayW = 176;
+  static const double _seqFont = 7.5, _seqRow = 10.5, _seqHead = 10;
+
+  static pw.Widget _sequencingAndSpray(HitterCard c, double inner, pw.MemoryImage? field) {
+    const gap = 8.0;
+    final leftW = inner - _sprayW - gap;
+    return pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+      pw.SizedBox(
+        width: leftW,
+        child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+          _heading('Pitch sequencing', width: leftW, note: 'this hitter only'),
+          pw.SizedBox(height: 2),
+          _t(c.sequenceNote, 6.5, color: _C.muted),
+          pw.SizedBox(height: 3),
+          _table(c.paTable, leftW,
+              font: _seqFont,
+              rowH: _seqRow,
+              headH: _seqHead,
+              empty: 'No finished plate appearances recorded',
+              heat: false),
+        ]),
+      ),
+      pw.SizedBox(width: gap),
+      pw.SizedBox(
+        width: _sprayW,
+        child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+          _heading('Spray chart', width: _sprayW, note: 'recorded locations'),
+          pw.SizedBox(height: 3),
+          _sprayChart(c.sprayPoints, _sprayW, field),
+          pw.SizedBox(height: 2),
+          _t(
+              c.sprayPoints.isEmpty
+                  ? (c.sprayMissing > 0
+                      ? '${c.sprayMissing} ball${c.sprayMissing == 1 ? '' : 's'} in play had no location recorded.'
+                      : 'No ball in play with a recorded location yet.')
+                  : 'Balls in play plotted: ${c.sprayPoints.length}.'
+                      '${c.sprayMissing > 0 ? ' ${c.sprayMissing} more had no location and are not drawn.' : ''}'
+                      ' Fill = result, ring = pitch hit. Dotted = ground ball, straight = line drive, arc = fly ball.',
+              6,
+              color: _C.muted),
+        ]),
+      ),
+    ]);
+  }
+
+  // Same constants and mapping as BaseballFieldPainter (field x -400..400,
+  // y -80..400; home plate sits at 49.92% / 95.22% of the picture).
+  static const double _fMinX = -400, _fMaxX = 400, _fMinY = -80, _fMaxY = 400;
+  static const double _homeFx = 0.4992, _homeFy = 0.9522;
+
+  static pw.Widget _sprayChart(List<PitchEvent> pts, double side, pw.MemoryImage? field) {
+    PdfColor col(Color c) => PdfColor.fromInt(c.value);
+    // (x, y) in points, origin top-left of the square.
+    (double, double) toBox(double fx, double fy) {
+      final nx = (fx - _fMinX) / (_fMaxX - _fMinX);
+      final ny = (fy - _fMinY) / (_fMaxY - _fMinY);
+      return (nx * side, side - ny * side);
+    }
+
+    final located = [
+      for (final p in pts)
+        if (p.xCoord != null && p.yCoord != null) p,
+    ];
+    final homeX = _homeFx * side, homeY = _homeFy * side;
+
+    final lines = pw.CustomPaint(
+      size: PdfPoint(side, side),
+      painter: (PdfGraphics g, PdfPoint size) {
+        g.setStrokeColor(PdfColors.white);
+        g.setLineWidth(0.9);
+        for (final p in located) {
+          if (p.battedType == null) continue;
+          final e = toBox(p.xCoord!, p.yCoord!);
+          // PDF y runs upward; flip our top-left origin.
+          final x0 = homeX, y0 = side - homeY, x1 = e.$1, y1 = side - e.$2;
+          switch (p.battedType) {
+            case 'gb':
+              g.setLineDashPattern([3, 2.5]);
+              g.moveTo(x0, y0);
+              g.lineTo(x1, y1);
+              g.strokePath();
+              g.setLineDashPattern();
+              break;
+            case 'ld':
+              g.moveTo(x0, y0);
+              g.lineTo(x1, y1);
+              g.strokePath();
+              break;
+            case 'fb':
+              final mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+              final dx = x1 - x0, dy = y1 - y0;
+              final len = (dx * dx + dy * dy) == 0 ? 0.0 : _sqrt(dx * dx + dy * dy);
+              if (len == 0) break;
+              // bow the arc like the app does (18% of the shot length)
+              final cx = mx + (-dy / len) * len * 0.18, cy = my + (dx / len) * len * 0.18;
+              g.moveTo(x0, y0);
+              g.curveTo(x0 + 2 / 3 * (cx - x0), y0 + 2 / 3 * (cy - y0), x1 + 2 / 3 * (cx - x1),
+                  y1 + 2 / 3 * (cy - y1), x1, y1);
+              g.strokePath();
+              break;
+          }
+        }
+      },
+    );
+
+    final dots = <pw.Widget>[
+      for (final p in located)
+        () {
+          final pos = toBox(p.xCoord!, p.yCoord!);
+          const r = 3.6;
+          return pw.Positioned(
+            left: pos.$1 - r,
+            top: pos.$2 - r,
+            child: pw.Container(
+              width: r * 2,
+              height: r * 2,
+              decoration: pw.BoxDecoration(
+                shape: pw.BoxShape.circle,
+                color: col(AppColors.sprayColor(p.outcome)),
+                border: pw.Border.all(color: col(AppColors.pitchColor(p.pitchType)), width: 1.1),
+              ),
+            ),
+          );
+        }(),
+    ];
+
+    return pw.Container(
+      width: side,
+      height: side,
+      decoration: pw.BoxDecoration(
+        color: PdfColor.fromInt(0xFF4F8A3C),
+        border: pw.Border.all(color: _C.border, width: 0.5),
+      ),
+      child: pw.ClipRect(
+        child: pw.Stack(fit: pw.StackFit.expand, children: [
+          if (field != null) pw.Positioned.fill(child: pw.Image(field, fit: pw.BoxFit.cover)),
+          pw.Positioned.fill(child: lines),
+          ...dots,
+          if (located.isEmpty)
+            pw.Center(
+              child: pw.Container(
+                padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                color: PdfColors.white,
+                child: _t('No recorded locations', 8, color: _C.muted),
+              ),
+            ),
+        ]),
+      ),
+    );
+  }
+
+  static double _sqrt(double v) => v <= 0 ? 0 : math.sqrt(v);
 
   static pw.Widget _fullNote(SheetNote n, double width) {
     final prefix = '${n.label} · ${n.tag} · ${n.conf}: ';
