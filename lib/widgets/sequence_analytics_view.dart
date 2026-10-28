@@ -4,6 +4,7 @@ import '../services/color_guides.dart';
 import '../services/sequence_analytics.dart';
 import '../services/stats_service.dart' show perfHex;
 import '../theme/app_theme.dart';
+import '../utils/responsive.dart';
 import '../widgets/glow.dart';
 import '../widgets/stat_box.dart';
 import '../widgets/stat_hold_info.dart';
@@ -122,10 +123,17 @@ List<Widget> _mixBoxList(Map<String, int> counts, String ctx) {
   ];
 }
 
-Widget _mixBoxes(Map<String, int> counts, String ctx) =>
-    Wrap(spacing: 6, runSpacing: 6, children: _mixBoxList(counts, ctx));
+/// Boxes sit centered in their card on phones (so a short last line is not
+/// jammed against the left edge); desktop and tablet keep the start alignment.
+WrapAlignment _boxAlign(BuildContext context) =>
+    Responsive.isPhone(context) ? WrapAlignment.center : WrapAlignment.start;
 
-Widget _boxes(List<Widget> children) => Wrap(spacing: 6, runSpacing: 6, children: children);
+Widget _mixBoxes(Map<String, int> counts, String ctx) => Builder(
+    builder: (context) =>
+        Wrap(spacing: 6, runSpacing: 6, alignment: _boxAlign(context), children: _mixBoxList(counts, ctx)));
+
+Widget _boxes(List<Widget> children) => Builder(
+    builder: (context) => Wrap(spacing: 6, runSpacing: 6, alignment: _boxAlign(context), children: children));
 
 /// One labelled value (used by the plain "Data used" card).
 class _M extends StatelessWidget {
@@ -134,12 +142,18 @@ class _M extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final phone = Responsive.isPhone(context);
     return ConstrainedBox(
       constraints: const BoxConstraints(minWidth: 52),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-        Text(label, style: const TextStyle(fontSize: 10, color: AppColors.colMuted, fontWeight: FontWeight.w700)),
-        Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
-      ]),
+      child: Column(
+          crossAxisAlignment: phone ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label,
+                textAlign: phone ? TextAlign.center : TextAlign.start,
+                style: const TextStyle(fontSize: 10, color: AppColors.colMuted, fontWeight: FontWeight.w700)),
+            Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+          ]),
     );
   }
 }
@@ -316,7 +330,9 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
   /// widget; when that Wrap broke lines the divider could sit alone in a
   /// 44px-high run, which showed up as an empty box under the results.)
   Widget _nextPitchMix(Map<String, int> counts, String ctx) =>
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Column(
+          crossAxisAlignment: Responsive.isPhone(context) ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+          children: [
         const Text('Next pitch thrown',
             style: TextStyle(fontSize: 10, color: AppColors.colMuted, fontWeight: FontWeight.w700)),
         const SizedBox(height: 4),
@@ -437,7 +453,11 @@ class _SequenceAnalyticsViewState extends State<SequenceAnalyticsView> {
             'opening sequences need FINISHED at-bats with at least that many pitches.',
         blurb: 'Everything below uses only pitch type, call, count and at-bat result.',
         children: [
-          Wrap(spacing: 16, runSpacing: 6, children: [
+          Wrap(
+              spacing: 16,
+              runSpacing: 6,
+              alignment: Responsive.isPhone(context) ? WrapAlignment.spaceEvenly : WrapAlignment.start,
+              children: [
             _M('Pitches', '${d.pitchRows}'),
             _M('Plate appearances', '${d.plateAppearances}'),
             _M('Finished', '${d.finishedPas}'),

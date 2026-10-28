@@ -2998,7 +2998,11 @@ class _GameInputScreenState extends State<GameInputScreen> {
           ]);
         }),
         const SizedBox(height: 8),
-        Wrap(spacing: 14, runSpacing: 4, children: [
+        Wrap(
+            spacing: 14,
+            runSpacing: 4,
+            alignment: Responsive.isPhone(context) ? WrapAlignment.center : WrapAlignment.start,
+            children: [
           _bhPlainStat('OPS', _fmtRate(o.ops), 'On-base plus slugging (OBP + SLG).'),
           _bhPlainStat('BB%', _fmtPct(o.bbPct), 'Walk percentage: walks ÷ plate appearances.'),
           _bhPlainStat('K%', _fmtPct(o.kPct), 'Strikeout percentage: strikeouts ÷ plate appearances.'),
@@ -3006,7 +3010,11 @@ class _GameInputScreenState extends State<GameInputScreen> {
               'Batting average on balls in play: hits on balls put in play (not counting home runs and strikeouts).'),
         ]),
         const SizedBox(height: 4),
-        Wrap(spacing: 14, runSpacing: 4, children: [
+        Wrap(
+            spacing: 14,
+            runSpacing: 4,
+            alignment: Responsive.isPhone(context) ? WrapAlignment.center : WrapAlignment.start,
+            children: [
           _bhPlainStat('AB', '${t.totalAtBats}', 'At-bats this batter has had against you.'),
           _bhPlainStat('P', '${t.totalPitches}', 'Pitches thrown to this batter.'),
           _bhPlainStat('K', '${t.strikeouts}', 'Strikeouts against you.'),

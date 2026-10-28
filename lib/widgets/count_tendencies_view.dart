@@ -18,10 +18,8 @@ String _pct1(double v) => '${v.toStringAsFixed(1)}%';
 ///
 /// DESKTOP / WIDE: one row per pitch type (plus an ALL row), one column per
 /// count that actually has pitches.
-/// PHONE (content narrower than [Breakpoints.phone]): the same grid turned a
-/// quarter turn with a normal responsive layout (no sideways text): pitch
-/// types across the top, counts down the left side. Both layouts show the
-/// same statistics.
+/// PHONE (content narrower than [Breakpoints.phone]): see the pitch selector
+/// below; the desktop grid is not used.
 ///
 /// Each square is split into three strips, always in this order:
 ///  1. Usage % with P - that pitch type's share of ALL pitches thrown at the
@@ -35,12 +33,28 @@ String _pct1(double v) => '${v.toStringAsFixed(1)}%';
 /// no pitches get no column. Graded strips use the app's scale style: bright
 /// border, duller fill. If the grid is wider than the screen it scrolls
 /// sideways inside itself.
-class CountTendenciesView extends StatelessWidget {
+///
+/// PHONE ONLY: a pitch selector (ALL + every pitch type in the data) sits at
+/// the top and the grid below shows ONLY the selected pitch, laid out as balls
+/// (down) by strikes (across) - 4 rows by 3 columns, no sideways scrolling.
+/// The selection is kept for as long as this view stays on screen, and falls
+/// back to ALL if that pitch type is no longer in the data. Desktop and tablet
+/// keep the full grid above unchanged.
+class CountTendenciesView extends StatefulWidget {
   final Map<String, dynamic> heatmap;
   const CountTendenciesView({super.key, required this.heatmap});
 
   @override
+  State<CountTendenciesView> createState() => _CountTendenciesViewState();
+}
+
+class _CountTendenciesViewState extends State<CountTendenciesView> {
+  /// Phone selector: 'ALL' or a pitch-type key.
+  String _selected = 'ALL';
+
+  @override
   Widget build(BuildContext context) {
+    final heatmap = widget.heatmap;
     final counts = heatmap['counts'] as List<String>;
     final pitchTypes = heatmap['pitchTypes'] as List<String>;
     final cells = heatmap['cells'] as Map<String, Map<String, dynamic>>;
@@ -58,17 +72,18 @@ class CountTendenciesView extends StatelessWidget {
 
     return LayoutBuilder(builder: (context, constraints) {
       final phone = constraints.maxWidth < Breakpoints.phone;
-      const labelW = 64.0;
+      // Phone: narrow row labels (balls) and always 3 columns (strikes 0-2).
+      final labelW = phone ? 46.0 : 64.0;
       // Number of columns the grid has in the current orientation.
-      final cols = phone ? pitchTypes.length + 1 : shown.length;
+      final cols = phone ? 3 : shown.length;
       // Whole pixels, so the row can never be a fraction of a pixel wider than
       // the space it is given. Below the minimum the grid scrolls sideways.
       final fit = ((constraints.maxWidth - labelW) / cols).floorToDouble();
-      final cell = phone ? fit.clamp(50.0, 96.0).toDouble() : fit.clamp(84.0, 108.0).toDouble();
-      final cellH = phone ? 108.0 : (cell < 100.0 ? 100.0 : cell);
-      final valueFont = phone ? 12.0 : (cell * 0.15).clamp(13.0, 16.0).toDouble();
-      final subFont = phone ? 9.0 : (cell * 0.105).clamp(9.5, 11.0).toDouble();
-      final labelFont = phone ? 7.5 : 8.5;
+      final cell = phone ? fit.clamp(60.0, 130.0).toDouble() : fit.clamp(84.0, 108.0).toDouble();
+      final cellH = phone ? 96.0 : (cell < 100.0 ? 100.0 : cell);
+      final valueFont = phone ? (cell * 0.15).clamp(12.0, 15.0).toDouble() : (cell * 0.15).clamp(13.0, 16.0).toDouble();
+      final subFont = phone ? 9.5 : (cell * 0.105).clamp(9.5, 11.0).toDouble();
+      final labelFont = phone ? 8.0 : 8.5;
       final tableW = labelW + cell * cols;
 
       // Usage / strike / BAA cells share one look on both layouts.
@@ -359,21 +374,80 @@ class CountTendenciesView extends StatelessWidget {
           ]),
         ]);
       } else {
-        // PHONE: pitch types across the top, counts down the left side.
-        grid = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            corner(across: 'Pitch', down: 'Count', height: 34),
-            for (final pt in pitchTypes)
-              SizedBox(width: cell, height: 34, child: Center(child: pitchChip(pt, cell - 4))),
-            SizedBox(width: cell, height: 34, child: Center(child: allChip(cell - 4))),
-          ]),
-          const SizedBox(height: 2),
-          for (final c in shown)
-            Row(children: [
-              countLabel(c, width: labelW, height: cellH),
-              for (final pt in pitchTypes) cellFor(c, pt),
-              allCellFor(c),
+        // PHONE: one pitch at a time. Balls (0-3) down the side, strikes
+        // (0-2) across the top; each square is that pitch at that count.
+        final sel = (_selected == 'ALL' || pitchTypes.contains(_selected)) ? _selected : 'ALL';
+        Widget head(String t) => SizedBox(
+              width: cell,
+              height: 22,
+              child: Center(
+                child: Text(t,
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: AppColors.colMuted)),
+              ),
+            );
+        Widget rowHead(int balls) => SizedBox(
+              width: labelW,
+              height: cellH,
+              child: Center(
+                child: Text('$balls ${balls == 1 ? 'ball' : 'balls'}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: AppColors.colMuted)),
+              ),
+            );
+        Widget selChip(String pt) {
+          final on = sel == pt;
+          final color = pt == 'ALL' ? AppColors.ink : AppColors.pitchColor(pt);
+          return GestureDetector(
+            onTap: () => setState(() => _selected = pt),
+            child: Container(
+              constraints: const BoxConstraints(minWidth: 44),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: on ? color : Colors.white,
+                border: Border.all(color: color, width: 1.6),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Text(pt.toUpperCase(),
+                  maxLines: 1,
+                  softWrap: false,
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: on ? Colors.white : AppColors.colText)),
+            ),
+          );
+        }
+
+        grid = Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              alignment: WrapAlignment.center,
+              children: [selChip('ALL'), for (final pt in pitchTypes) selChip(pt)],
+            ),
+          ),
+          Center(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                SizedBox(width: labelW, height: 22),
+                for (var st = 0; st < 3; st++) head('$st ${st == 1 ? 'strike' : 'strikes'}'),
+              ]),
+              for (var b = 0; b < 4; b++)
+                Row(children: [
+                  rowHead(b),
+                  for (var st = 0; st < 3; st++)
+                    () {
+                      final c = '$b-$st';
+                      return sel == 'ALL'
+                          ? ((countTotals[c] ?? 0) > 0 ? allCellFor(c) : emptySquare())
+                          : cellFor(c, sel);
+                    }(),
+                ]),
             ]),
+          ),
         ]);
       }
 
@@ -389,17 +463,17 @@ class CountTendenciesView extends StatelessWidget {
           const Text('BAA', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900, color: AppColors.colMuted)),
           Text(
             phone
-                ? 'Columns: pitch types · Rows: counts (balls-strikes). Orange P = under 10 pitches.'
+                ? 'Pick a pitch above. Rows: balls · Columns: strikes (the count before the pitch). A dash = no pitch there.'
                 : 'Rows: pitch types · Columns: counts (balls-strikes). Orange P = under 10 pitches.',
             style: const TextStyle(fontSize: 11.5, color: AppColors.colMuted),
           ),
         ]),
       );
 
-      final sized = SizedBox(width: tableW, child: grid);
+      final sized = SizedBox(width: phone ? constraints.maxWidth : tableW, child: grid);
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         key,
-        if (tableW <= constraints.maxWidth)
+        if (phone || tableW <= constraints.maxWidth)
           sized
         else
           SingleChildScrollView(scrollDirection: Axis.horizontal, child: sized),

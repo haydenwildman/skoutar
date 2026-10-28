@@ -228,8 +228,9 @@ class _Page1 extends StatelessWidget {
       _section('Team performance vs this pitcher',
           note: 'Whole-opponent totals. ERA/WHIP use innings pitched; K%, BB% and XBH use plate appearances.'),
       LayoutBuilder(builder: (context, c) {
-        // Equal-width boxes: one row on wide screens, 3 or 2 per row on phones.
-        final perRow = phone ? (c.maxWidth >= 420 ? 3 : 2) : s.summary.length;
+        // Equal-width boxes: one row on wide screens; on phones always a
+        // 3-by-3 grid (nine boxes, three per row) at any phone width.
+        final perRow = phone ? 3 : s.summary.length;
         const gap = 5.0;
         final w = ((c.maxWidth - gap * (perRow - 1)) / perRow).floorToDouble();
         return Wrap(spacing: gap, runSpacing: gap, children: [

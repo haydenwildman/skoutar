@@ -795,7 +795,12 @@ class _PitchSummaryCards extends StatelessWidget {
       final perRow = w < 420 ? 2 : (w < 640 ? 3 : 5);
       var cardW = (w - gap * (perRow - 1)) / perRow;
       if (perRow > 2 && cardW > 180) cardW = 180;
-      return Wrap(spacing: gap, runSpacing: gap, children: [
+      return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          // Phones: an odd last card is centered instead of left-packed.
+          alignment: Responsive.isPhone(context) ? WrapAlignment.center : WrapAlignment.start,
+          children: [
         for (final row in breakdown) SizedBox(width: cardW, child: _card(context, row)),
       ]);
     });
@@ -810,14 +815,17 @@ class _PitchSummaryCards extends StatelessWidget {
     final whiff = row['whiffPct'] as double?;
     final isSel = selected == type;
     final dim = selected != null && !isSel;
+    // Phones: center the card's contents; desktop/tablet keep them left-aligned.
+    final phone = Responsive.isPhone(context);
 
     Widget stat(String value, String label) => Row(
           crossAxisAlignment: CrossAxisAlignment.center,
+          mainAxisAlignment: phone ? MainAxisAlignment.center : MainAxisAlignment.start,
           children: [
             Flexible(
               child: FittedBox(
                 fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
+                alignment: phone ? Alignment.center : Alignment.centerLeft,
                 child: Text(value,
                     maxLines: 1,
                     style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: AppColors.ink)),
@@ -836,10 +844,10 @@ class _PitchSummaryCards extends StatelessWidget {
         border: Border.all(color: isSel ? AppColors.ink : AppColors.colBorder, width: isSel ? 2 : 1),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: phone ? CrossAxisAlignment.center : CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(children: [
+          Row(mainAxisAlignment: phone ? MainAxisAlignment.center : MainAxisAlignment.start, children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               constraints: const BoxConstraints(maxWidth: 70),
@@ -850,7 +858,7 @@ class _PitchSummaryCards extends StatelessWidget {
                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 12)),
             ),
             const SizedBox(width: 6),
-            Expanded(
+            Flexible(
               child: Text('$n pitch${n == 1 ? '' : 'es'}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,

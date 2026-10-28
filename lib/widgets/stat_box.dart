@@ -89,7 +89,7 @@ class StatBox extends StatelessWidget {
       width: width,
       height: height,
       alignment: Alignment.center,
-      padding: EdgeInsets.fromLTRB(accent == null ? 6 : 9, 4, 6, 4),
+      padding: EdgeInsets.fromLTRB(accent == null ? 6 : 9, 4, accent == null ? 6 : 9, 4),
       decoration: BoxDecoration(
         color: fill,
         borderRadius: BorderRadius.circular(8),
