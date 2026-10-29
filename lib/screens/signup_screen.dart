@@ -7,6 +7,8 @@ import '../services/app_session.dart';
 import '../services/auth_service.dart';
 import '../services/legal_config.dart';
 import '../services/plan_service.dart';
+import '../subscriptions/revenuecat_config.dart';
+import '../subscriptions/subscription_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/auth_shell.dart';
 import '../widgets/orange_glow_button.dart';
@@ -35,6 +37,7 @@ class _SignupScreenState extends State<SignupScreen> {
 
   int _step = 0;
   SubscriptionPlan? _plan;
+  BillingInterval _interval = BillingInterval.monthly; // remembered for checkout; nothing is charged here
   final List<PitcherDraft> _pitchers = [PitcherDraft()]; // [0] = first pitcher
   bool _agreed = false;
 
@@ -152,6 +155,7 @@ class _SignupScreenState extends State<SignupScreen> {
           planId: _plan!.id,
           pitcherLimit: _limit,
           termsVersion: LegalConfig.termsVersion,
+          billingInterval: _interval.name,
         );
     if (!mounted) return;
     setState(() {
@@ -230,6 +234,50 @@ class _SignupScreenState extends State<SignupScreen> {
     );
   }
 
+  /// Localized store price from RevenueCat when it is loaded (iOS/Android);
+  /// otherwise the plan's monthly reference price from the database, or a note
+  /// for yearly (the real yearly price is shown at checkout).
+  String _priceFor(SubscriptionPlan p) {
+    final live = SubscriptionService.instance.priceLabelFor(p.id, _interval);
+    if (live != null) return live;
+    return _interval == BillingInterval.monthly ? p.priceLabel : 'Yearly price at checkout';
+  }
+
+  Widget _intervalToggle() {
+    Widget seg(BillingInterval i) {
+      final sel = _interval == i;
+      return Expanded(
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => setState(() => _interval = i),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                  color: sel ? AppColors.brandOrangeDeep : AppColors.colBorder, width: 2),
+              color: sel ? AppColors.tint : Colors.white,
+            ),
+            child: Text(i.label,
+                style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    color: sel ? AppColors.brandOrangeDeep : AppColors.ink)),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(children: [
+        seg(BillingInterval.monthly),
+        const SizedBox(width: 8),
+        seg(BillingInterval.yearly),
+      ]),
+    );
+  }
+
   Widget _planCard(SubscriptionPlan p) {
     final selected = _plan?.id == p.id;
     return InkWell(
@@ -259,7 +307,7 @@ class _SignupScreenState extends State<SignupScreen> {
                       style: const TextStyle(
                           fontWeight: FontWeight.w900, fontSize: 17, color: AppColors.ink)),
                 ),
-                Text(p.priceLabel,
+                Text(_priceFor(p),
                     style: const TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: 14,
@@ -303,8 +351,8 @@ class _SignupScreenState extends State<SignupScreen> {
     final trial = p == null
         ? 'Every plan includes a free trial.'
         : p.hasTrialLength
-            ? '${p.name} includes a ${p.trialDays}-day free trial, then ${p.priceLabel}.'
-            : '${p.name} includes a free trial (length to be announced), then ${p.priceLabel}.';
+            ? '${p.name} includes a ${p.trialDays}-day free trial. Pricing: ${_priceFor(p)}.'
+            : '${p.name} includes a free trial (length to be announced). Pricing: ${_priceFor(p)}.';
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
@@ -324,9 +372,9 @@ class _SignupScreenState extends State<SignupScreen> {
           const SizedBox(height: 4),
           const Text(
             'You will not be charged to create an account, and no payment details '
-            'are collected now. Billing is not active yet. Before any charge, '
-            'SKOUTAR will show you the recurring price, when billing begins, and '
-            'how to cancel.',
+            'are collected here. After you log in on iOS or Android you can '
+            'subscribe through the App Store or Google Play, where the final price, '
+            'renewal terms and how to cancel are shown before you confirm.',
             style: TextStyle(fontSize: 12, color: AppColors.colMuted),
           ),
         ],
@@ -352,7 +400,11 @@ class _SignupScreenState extends State<SignupScreen> {
               text: 'Plan details could not be loaded from the server, so default '
                   'plans are shown. Sign-up may not work until this is fixed.',
             ),
-          for (final p in _plans) _planCard(p),
+          _intervalToggle(),
+          ListenableBuilder(
+            listenable: SubscriptionService.instance,
+            builder: (context, _) => Column(children: [for (final p in _plans) _planCard(p)]),
+          ),
         ],
         _trialNotice(),
       ];
@@ -467,7 +519,7 @@ class _SignupScreenState extends State<SignupScreen> {
         const Text('Review',
             style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
         const SizedBox(height: 8),
-        Text('${_plan?.name ?? ''} plan · ${_plan?.priceLabel ?? ''}',
+        Text('${_plan?.name ?? ''} plan · ${_plan == null ? '' : _priceFor(_plan!)}',
             style: const TextStyle(fontWeight: FontWeight.w800)),
         Text('Owner login: ${_emailCtrl.text.trim()}',
             style: const TextStyle(fontSize: 13)),
@@ -541,7 +593,7 @@ class _SignupScreenState extends State<SignupScreen> {
               child: Padding(
                 padding: const EdgeInsets.only(top: 2),
                 child: Text(
-                  '${_plan!.name} · ${_plan!.priceLabel} · '
+                  '${_plan!.name} · ${_interval.label} · '
                   '${_limit == 1 ? '1 pitcher' : 'up to $_limit pitchers'}',
                   style: const TextStyle(
                       fontSize: 12,

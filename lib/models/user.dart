@@ -65,6 +65,10 @@ class AppUser {
   String? subscriptionStatus; // pending | trialing | active | ...
   DateTime? trialEnd;
   int maxPitchers; // how many pitcher profiles the plan allows
+  bool paid; // server says a paid subscription is active (set only by the verified billing webhook)
+  DateTime? periodEnd;
+  bool cancelAtPeriodEnd;
+  String? billingInterval; // 'monthly' | 'yearly' (from the last verified purchase)
 
   AppUser({
     required this.id,
@@ -81,6 +85,10 @@ class AppUser {
     this.subscriptionStatus,
     this.trialEnd,
     this.maxPitchers = 1,
+    this.paid = false,
+    this.periodEnd,
+    this.cancelAtPeriodEnd = false,
+    this.billingInterval,
   })  : pitcherDisplayName = pitcherDisplayName ?? username,
         createdAt = createdAt ?? DateTime.now();
 
@@ -89,6 +97,20 @@ class AppUser {
   /// getter so older call sites keep compiling.
   bool get isPlus => true;
   bool get isActive => status == SubStatus.active;
+
+  /// Re-reads the server's get_my_entitlement() result (display only; the
+  /// server decides access).
+  void applyEntitlement(Map<String, dynamic> e) {
+    planId = e['plan_id'] as String?;
+    planName = e['plan_name'] as String?;
+    subscriptionStatus = e['subscription_status'] as String?;
+    trialEnd = DateTime.tryParse(e['trial_end'] as String? ?? '')?.toLocal();
+    maxPitchers = (e['max_pitchers'] as num?)?.toInt() ?? 1;
+    paid = e['paid'] == true;
+    periodEnd = DateTime.tryParse(e['current_period_end'] as String? ?? '')?.toLocal();
+    cancelAtPeriodEnd = e['cancel_at_period_end'] == true;
+    billingInterval = e['billing_interval'] as String?;
+  }
 
   /// Built from a joined `auth.users` (email) + `public.profiles`
   /// (username/tier/status/...) row — see AuthService.
@@ -116,6 +138,10 @@ class AppUser {
       subscriptionStatus: entitlement?['subscription_status'] as String?,
       trialEnd: DateTime.tryParse(entitlement?['trial_end'] as String? ?? '')?.toLocal(),
       maxPitchers: (entitlement?['max_pitchers'] as num?)?.toInt() ?? 1,
+      paid: entitlement?['paid'] == true,
+      periodEnd: DateTime.tryParse(entitlement?['current_period_end'] as String? ?? '')?.toLocal(),
+      cancelAtPeriodEnd: entitlement?['cancel_at_period_end'] == true,
+      billingInterval: entitlement?['billing_interval'] as String?,
     );
   }
 }

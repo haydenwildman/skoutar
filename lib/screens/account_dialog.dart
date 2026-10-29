@@ -4,6 +4,7 @@ import '../models/user.dart';
 import '../services/app_session.dart';
 import '../theme/app_theme.dart';
 import '../widgets/auth_shell.dart';
+import 'subscribe_screen.dart';
 import 'login_screen.dart';
 
 /// Account summary + permanent account deletion. Opened by tapping the
@@ -79,6 +80,14 @@ class _AccountDialog extends StatelessWidget {
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Close'),
+        ),
+        TextButton(
+          onPressed: () {
+            final nav = Navigator.of(context);
+            nav.pop();
+            nav.push(MaterialPageRoute(builder: (_) => const SubscribeScreen()));
+          },
+          child: const Text('Subscription'),
         ),
         TextButton(
           style: TextButton.styleFrom(foregroundColor: AppColors.colError),

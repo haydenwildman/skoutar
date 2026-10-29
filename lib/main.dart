@@ -6,6 +6,8 @@ import 'services/auth_service.dart';
 import 'services/app_session.dart';
 import 'services/supabase_config.dart';
 import 'services/remembered_account_service.dart';
+import 'subscriptions/subscription_service.dart';
+import 'screens/subscribe_screen.dart';
 import 'theme/app_theme.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_shell.dart';
@@ -17,6 +19,8 @@ Future<void> main() async {
   // the page was opened from a password-reset email link (web).
   final startedInRecovery = Uri.base.toString().contains('type=recovery');
   await initSupabase();
+  // RevenueCat (iOS/Android only; a no-op elsewhere or without a key; never throws).
+  await SubscriptionService.instance.init();
 
   final storage = StorageService();
   final auth = AuthService();
@@ -119,6 +123,10 @@ class _RootRouterState extends State<_RootRouter> {
       });
     }
     final session = context.watch<AppSession>();
-    return session.isLoggedIn ? const HomeShell() : const LoginScreen();
+    if (!session.isLoggedIn) return const LoginScreen();
+    // Not paid yet (and no meaningful trial left, or a brand-new account):
+    // offer the real purchase screen. "Not now" continues into the app.
+    if (session.shouldOfferSubscription) return const SubscribeScreen(asGate: true);
+    return const HomeShell();
   }
 }

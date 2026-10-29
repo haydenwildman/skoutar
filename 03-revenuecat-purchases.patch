@@ -1,0 +1,1757 @@
+diff --git a/SKOUTAR_REVENUECAT_SETUP.md b/SKOUTAR_REVENUECAT_SETUP.md
+new file mode 100644
+index 0000000..9bb99ae
+--- /dev/null
++++ b/SKOUTAR_REVENUECAT_SETUP.md
+@@ -0,0 +1,45 @@
++# SKOUTAR: RevenueCat purchases
++
++Not compiled or run by whoever wrote it. Run `flutter pub get` and `flutter analyze` first and fix anything it reports.
++
++## How the six products connect
++`lib/subscriptions/revenuecat_config.dart` is the only place that knows the RevenueCat ids.
++
++| Plan / interval     | Offering             | Product (RevenueCat Product ID) |
++|---------------------|----------------------|----------------------------------|
++| Individual monthly  | `individual_monthly` | `monthly`                        |
++| Individual yearly   | `individual_yearly`  | `yearly`                         |
++| Family monthly      | `family_monthly`     | `family_monthly`                 |
++| Family yearly       | `family_yearly`      | `family_yearly`                  |
++| Team monthly        | `team_monthly`       | `team_monthly`                   |
++| Team yearly         | `team_yearly`        | `team_yearly`                    |
++
++`SubscriptionService.packageFor(plan, interval)` fetches offerings, opens the plan's offering, and picks the package whose store product matches (Google Play `id:base-plan` suffixes are ignored). If that offering doesn't contain it, any offering that does is used (this is how the Individual products also resolve through `default`). All six share the entitlement `skoutar_pro`.
++
++## Purchase flow
++Plan -> Account -> Pitcher -> More pitchers -> Review is unchanged. The plan step now has a Monthly/Yearly switch and shows RevenueCat's localized price when loaded (iOS/Android), else the database reference price. Creating the account charges nothing.
++Payment happens right after the first login (sign-up signs you out, and email confirmation may be on), in `SubscribeScreen`:
++- shown automatically after login when nothing is paid and there is no real trial left, or the account is under 24 hours old; "Not now" continues into the app
++- always reachable: Account dialog -> Subscription
++- the screen only reports success when RevenueCat says `skoutar_pro` is active; it then re-reads the server and says plainly if the account is still syncing
++
++## Who decides what is paid
++- Client: `SubscriptionService` shows what RevenueCat/the store say. It never writes subscription data.
++- Server: RevenueCat webhook -> Edge Function `revenuecat-webhook` (shared-secret check) -> `apply_revenuecat_event()` (service_role only) -> `user_subscriptions`. The plan comes from the purchased PRODUCT id via `revenuecat_product_plans`, so a Family purchase can't become Individual, and the client cannot name its own plan or price.
++- App reads `get_my_entitlement()` (now also returns `paid`, `current_period_end`, `cancel_at_period_end`, `billing_interval`).
++- Pitcher limits keep coming from `subscription_plans.max_pitchers` for the plan on the account.
++
++## Setup you must do
++1. Apply the patch, `flutter pub get`.
++2. Supabase SQL Editor: run `supabase_revenuecat_migration.sql`.
++3. Webhook secret + deploy:
++   `supabase secrets set REVENUECAT_WEBHOOK_AUTH="<long random string>"`
++   `supabase functions deploy revenuecat-webhook --no-verify-jwt`
++4. RevenueCat dashboard -> Integrations -> Webhooks: URL `https://xmzdwoqvnnwhbnntziuk.supabase.co/functions/v1/revenuecat-webhook`, Authorization header = the same string.
++5. Keys (public SDK keys only, never `sk_`):
++   - Debug: the Test Store key is built in for `flutter run`.
++   - Release: `--dart-define=REVENUECAT_API_KEY_IOS=appl_...` and `--dart-define=REVENUECAT_API_KEY_ANDROID=goog_...` (a Test Store key does not work in release).
++6. Customer Center: enable it in RevenueCat (used by "Manage subscription").
++
++## Testing in Test Store
++Run on an Android or iOS device/emulator: `flutter run -d <device> --dart-define=SUPABASE_ANON_KEY=...`. Purchases do not run on Windows or Web (the screen says so).
+diff --git a/android/app/src/main/kotlin/com/example/pitching_analytics/MainActivity.kt b/android/app/src/main/kotlin/com/example/pitching_analytics/MainActivity.kt
+index b6d462e..8d73771 100644
+--- a/android/app/src/main/kotlin/com/example/pitching_analytics/MainActivity.kt
++++ b/android/app/src/main/kotlin/com/example/pitching_analytics/MainActivity.kt
+@@ -1,5 +1,6 @@
+ package com.example.pitching_analytics
+ 
+-import io.flutter.embedding.android.FlutterActivity
++import io.flutter.embedding.android.FlutterFragmentActivity
+ 
+-class MainActivity : FlutterActivity()
++// RevenueCat's Customer Center needs FlutterFragmentActivity.
++class MainActivity : FlutterFragmentActivity()
+diff --git a/lib/main.dart b/lib/main.dart
+index b106c31..01431e8 100644
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -6,6 +6,8 @@ import 'services/auth_service.dart';
+ import 'services/app_session.dart';
+ import 'services/supabase_config.dart';
+ import 'services/remembered_account_service.dart';
++import 'subscriptions/subscription_service.dart';
++import 'screens/subscribe_screen.dart';
+ import 'theme/app_theme.dart';
+ import 'screens/login_screen.dart';
+ import 'screens/home_shell.dart';
+@@ -17,6 +19,8 @@ Future<void> main() async {
+   // the page was opened from a password-reset email link (web).
+   final startedInRecovery = Uri.base.toString().contains('type=recovery');
+   await initSupabase();
++  // RevenueCat (iOS/Android only; a no-op elsewhere or without a key; never throws).
++  await SubscriptionService.instance.init();
+ 
+   final storage = StorageService();
+   final auth = AuthService();
+@@ -119,6 +123,10 @@ class _RootRouterState extends State<_RootRouter> {
+       });
+     }
+     final session = context.watch<AppSession>();
+-    return session.isLoggedIn ? const HomeShell() : const LoginScreen();
++    if (!session.isLoggedIn) return const LoginScreen();
++    // Not paid yet (and no meaningful trial left, or a brand-new account):
++    // offer the real purchase screen. "Not now" continues into the app.
++    if (session.shouldOfferSubscription) return const SubscribeScreen(asGate: true);
++    return const HomeShell();
+   }
+ }
+diff --git a/lib/models/user.dart b/lib/models/user.dart
+index ea91b19..6131e24 100644
+--- a/lib/models/user.dart
++++ b/lib/models/user.dart
+@@ -65,6 +65,10 @@ class AppUser {
+   String? subscriptionStatus; // pending | trialing | active | ...
+   DateTime? trialEnd;
+   int maxPitchers; // how many pitcher profiles the plan allows
++  bool paid; // server says a paid subscription is active (set only by the verified billing webhook)
++  DateTime? periodEnd;
++  bool cancelAtPeriodEnd;
++  String? billingInterval; // 'monthly' | 'yearly' (from the last verified purchase)
+ 
+   AppUser({
+     required this.id,
+@@ -81,6 +85,10 @@ class AppUser {
+     this.subscriptionStatus,
+     this.trialEnd,
+     this.maxPitchers = 1,
++    this.paid = false,
++    this.periodEnd,
++    this.cancelAtPeriodEnd = false,
++    this.billingInterval,
+   })  : pitcherDisplayName = pitcherDisplayName ?? username,
+         createdAt = createdAt ?? DateTime.now();
+ 
+@@ -90,6 +98,20 @@ class AppUser {
+   bool get isPlus => true;
+   bool get isActive => status == SubStatus.active;
+ 
++  /// Re-reads the server's get_my_entitlement() result (display only; the
++  /// server decides access).
++  void applyEntitlement(Map<String, dynamic> e) {
++    planId = e['plan_id'] as String?;
++    planName = e['plan_name'] as String?;
++    subscriptionStatus = e['subscription_status'] as String?;
++    trialEnd = DateTime.tryParse(e['trial_end'] as String? ?? '')?.toLocal();
++    maxPitchers = (e['max_pitchers'] as num?)?.toInt() ?? 1;
++    paid = e['paid'] == true;
++    periodEnd = DateTime.tryParse(e['current_period_end'] as String? ?? '')?.toLocal();
++    cancelAtPeriodEnd = e['cancel_at_period_end'] == true;
++    billingInterval = e['billing_interval'] as String?;
++  }
++
+   /// Built from a joined `auth.users` (email) + `public.profiles`
+   /// (username/tier/status/...) row — see AuthService.
+   factory AppUser.fromSupabase({
+@@ -116,6 +138,10 @@ class AppUser {
+       subscriptionStatus: entitlement?['subscription_status'] as String?,
+       trialEnd: DateTime.tryParse(entitlement?['trial_end'] as String? ?? '')?.toLocal(),
+       maxPitchers: (entitlement?['max_pitchers'] as num?)?.toInt() ?? 1,
++      paid: entitlement?['paid'] == true,
++      periodEnd: DateTime.tryParse(entitlement?['current_period_end'] as String? ?? '')?.toLocal(),
++      cancelAtPeriodEnd: entitlement?['cancel_at_period_end'] == true,
++      billingInterval: entitlement?['billing_interval'] as String?,
+     );
+   }
+ }
+diff --git a/lib/screens/account_dialog.dart b/lib/screens/account_dialog.dart
+index 67eaacb..fdd9ac0 100644
+--- a/lib/screens/account_dialog.dart
++++ b/lib/screens/account_dialog.dart
+@@ -4,6 +4,7 @@ import '../models/user.dart';
+ import '../services/app_session.dart';
+ import '../theme/app_theme.dart';
+ import '../widgets/auth_shell.dart';
++import 'subscribe_screen.dart';
+ import 'login_screen.dart';
+ 
+ /// Account summary + permanent account deletion. Opened by tapping the
+@@ -80,6 +81,14 @@ class _AccountDialog extends StatelessWidget {
+           onPressed: () => Navigator.of(context).pop(),
+           child: const Text('Close'),
+         ),
++        TextButton(
++          onPressed: () {
++            final nav = Navigator.of(context);
++            nav.pop();
++            nav.push(MaterialPageRoute(builder: (_) => const SubscribeScreen()));
++          },
++          child: const Text('Subscription'),
++        ),
+         TextButton(
+           style: TextButton.styleFrom(foregroundColor: AppColors.colError),
+           onPressed: () async {
+diff --git a/lib/screens/signup_screen.dart b/lib/screens/signup_screen.dart
+index 56d27a9..b79e595 100644
+--- a/lib/screens/signup_screen.dart
++++ b/lib/screens/signup_screen.dart
+@@ -7,6 +7,8 @@ import '../services/app_session.dart';
+ import '../services/auth_service.dart';
+ import '../services/legal_config.dart';
+ import '../services/plan_service.dart';
++import '../subscriptions/revenuecat_config.dart';
++import '../subscriptions/subscription_service.dart';
+ import '../theme/app_theme.dart';
+ import '../widgets/auth_shell.dart';
+ import '../widgets/orange_glow_button.dart';
+@@ -35,6 +37,7 @@ class _SignupScreenState extends State<SignupScreen> {
+ 
+   int _step = 0;
+   SubscriptionPlan? _plan;
++  BillingInterval _interval = BillingInterval.monthly; // remembered for checkout; nothing is charged here
+   final List<PitcherDraft> _pitchers = [PitcherDraft()]; // [0] = first pitcher
+   bool _agreed = false;
+ 
+@@ -152,6 +155,7 @@ class _SignupScreenState extends State<SignupScreen> {
+           planId: _plan!.id,
+           pitcherLimit: _limit,
+           termsVersion: LegalConfig.termsVersion,
++          billingInterval: _interval.name,
+         );
+     if (!mounted) return;
+     setState(() {
+@@ -230,6 +234,50 @@ class _SignupScreenState extends State<SignupScreen> {
+     );
+   }
+ 
++  /// Localized store price from RevenueCat when it is loaded (iOS/Android);
++  /// otherwise the plan's monthly reference price from the database, or a note
++  /// for yearly (the real yearly price is shown at checkout).
++  String _priceFor(SubscriptionPlan p) {
++    final live = SubscriptionService.instance.priceLabelFor(p.id, _interval);
++    if (live != null) return live;
++    return _interval == BillingInterval.monthly ? p.priceLabel : 'Yearly price at checkout';
++  }
++
++  Widget _intervalToggle() {
++    Widget seg(BillingInterval i) {
++      final sel = _interval == i;
++      return Expanded(
++        child: InkWell(
++          borderRadius: BorderRadius.circular(8),
++          onTap: () => setState(() => _interval = i),
++          child: Container(
++            padding: const EdgeInsets.symmetric(vertical: 10),
++            alignment: Alignment.center,
++            decoration: BoxDecoration(
++              borderRadius: BorderRadius.circular(8),
++              border: Border.all(
++                  color: sel ? AppColors.brandOrangeDeep : AppColors.colBorder, width: 2),
++              color: sel ? AppColors.tint : Colors.white,
++            ),
++            child: Text(i.label,
++                style: TextStyle(
++                    fontWeight: FontWeight.w900,
++                    color: sel ? AppColors.brandOrangeDeep : AppColors.ink)),
++          ),
++        ),
++      );
++    }
++
++    return Padding(
++      padding: const EdgeInsets.only(bottom: 10),
++      child: Row(children: [
++        seg(BillingInterval.monthly),
++        const SizedBox(width: 8),
++        seg(BillingInterval.yearly),
++      ]),
++    );
++  }
++
+   Widget _planCard(SubscriptionPlan p) {
+     final selected = _plan?.id == p.id;
+     return InkWell(
+@@ -259,7 +307,7 @@ class _SignupScreenState extends State<SignupScreen> {
+                       style: const TextStyle(
+                           fontWeight: FontWeight.w900, fontSize: 17, color: AppColors.ink)),
+                 ),
+-                Text(p.priceLabel,
++                Text(_priceFor(p),
+                     style: const TextStyle(
+                         fontWeight: FontWeight.w800,
+                         fontSize: 14,
+@@ -303,8 +351,8 @@ class _SignupScreenState extends State<SignupScreen> {
+     final trial = p == null
+         ? 'Every plan includes a free trial.'
+         : p.hasTrialLength
+-            ? '${p.name} includes a ${p.trialDays}-day free trial, then ${p.priceLabel}.'
+-            : '${p.name} includes a free trial (length to be announced), then ${p.priceLabel}.';
++            ? '${p.name} includes a ${p.trialDays}-day free trial. Pricing: ${_priceFor(p)}.'
++            : '${p.name} includes a free trial (length to be announced). Pricing: ${_priceFor(p)}.';
+     return Container(
+       width: double.infinity,
+       padding: const EdgeInsets.all(12),
+@@ -324,9 +372,9 @@ class _SignupScreenState extends State<SignupScreen> {
+           const SizedBox(height: 4),
+           const Text(
+             'You will not be charged to create an account, and no payment details '
+-            'are collected now. Billing is not active yet. Before any charge, '
+-            'SKOUTAR will show you the recurring price, when billing begins, and '
+-            'how to cancel.',
++            'are collected here. After you log in on iOS or Android you can '
++            'subscribe through the App Store or Google Play, where the final price, '
++            'renewal terms and how to cancel are shown before you confirm.',
+             style: TextStyle(fontSize: 12, color: AppColors.colMuted),
+           ),
+         ],
+@@ -352,7 +400,11 @@ class _SignupScreenState extends State<SignupScreen> {
+               text: 'Plan details could not be loaded from the server, so default '
+                   'plans are shown. Sign-up may not work until this is fixed.',
+             ),
+-          for (final p in _plans) _planCard(p),
++          _intervalToggle(),
++          ListenableBuilder(
++            listenable: SubscriptionService.instance,
++            builder: (context, _) => Column(children: [for (final p in _plans) _planCard(p)]),
++          ),
+         ],
+         _trialNotice(),
+       ];
+@@ -467,7 +519,7 @@ class _SignupScreenState extends State<SignupScreen> {
+         const Text('Review',
+             style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+         const SizedBox(height: 8),
+-        Text('${_plan?.name ?? ''} plan · ${_plan?.priceLabel ?? ''}',
++        Text('${_plan?.name ?? ''} plan · ${_plan == null ? '' : _priceFor(_plan!)}',
+             style: const TextStyle(fontWeight: FontWeight.w800)),
+         Text('Owner login: ${_emailCtrl.text.trim()}',
+             style: const TextStyle(fontSize: 13)),
+@@ -541,7 +593,7 @@ class _SignupScreenState extends State<SignupScreen> {
+               child: Padding(
+                 padding: const EdgeInsets.only(top: 2),
+                 child: Text(
+-                  '${_plan!.name} · ${_plan!.priceLabel} · '
++                  '${_plan!.name} · ${_interval.label} · '
+                   '${_limit == 1 ? '1 pitcher' : 'up to $_limit pitchers'}',
+                   style: const TextStyle(
+                       fontSize: 12,
+diff --git a/lib/screens/subscribe_screen.dart b/lib/screens/subscribe_screen.dart
+new file mode 100644
+index 0000000..0512c7f
+--- /dev/null
++++ b/lib/screens/subscribe_screen.dart
+@@ -0,0 +1,502 @@
++import 'package:flutter/material.dart';
++import 'package:provider/provider.dart';
++import 'package:purchases_flutter/purchases_flutter.dart';
++import 'package:purchases_ui_flutter/purchases_ui_flutter.dart';
++import 'package:url_launcher/url_launcher.dart';
++import '../models/subscription_plan.dart';
++import '../models/user.dart';
++import '../services/app_session.dart';
++import '../services/legal_config.dart';
++import '../services/plan_service.dart';
++import '../services/supabase_config.dart';
++import '../subscriptions/revenuecat_config.dart';
++import '../subscriptions/subscription_service.dart';
++import '../theme/app_theme.dart';
++import '../widgets/orange_glow_button.dart';
++
++/// Real subscription purchase screen (RevenueCat).
++///
++/// Shows Individual / Family / Team with a Monthly / Yearly switch, the store's
++/// localized price for each, and buys the chosen product. Success is only
++/// reported once RevenueCat confirms the `skoutar_pro` entitlement; the account
++/// itself is marked paid by the verified server webhook, never by this screen.
++///
++/// [asGate]: shown right after login when nothing is paid yet; "Not now"
++/// continues into the app.
++class SubscribeScreen extends StatefulWidget {
++  const SubscribeScreen({super.key, this.asGate = false});
++  final bool asGate;
++
++  @override
++  State<SubscribeScreen> createState() => _SubscribeScreenState();
++}
++
++class _SubscribeScreenState extends State<SubscribeScreen> {
++  List<SubscriptionPlan> _plans = SubscriptionPlan.fallback;
++  late String _planId;
++  late BillingInterval _interval;
++
++  bool _busy = false;
++  bool _rcConfirmed = false; // RevenueCat confirmed skoutar_pro in this visit
++  String? _message;
++  bool _messageOk = false;
++
++  @override
++  void initState() {
++    super.initState();
++    final user = context.read<AppSession>().currentUser;
++    _planId = user?.planId ?? 'individual';
++    final meta = sb.auth.currentUser?.userMetadata;
++    _interval = BillingIntervalX.fromString(
++        (meta?['billing_interval'] as String?) ?? user?.billingInterval);
++    _loadPlans();
++    SubscriptionService.instance.refresh();
++  }
++
++  Future<void> _loadPlans() async {
++    final r = await PlanService().fetchPlans();
++    if (!mounted) return;
++    setState(() {
++      _plans = r.plans;
++      if (!_plans.any((p) => p.id == _planId) && _plans.isNotEmpty) {
++        _planId = _plans.first.id;
++      }
++    });
++  }
++
++  SubscriptionPlan get _plan =>
++      _plans.firstWhere((p) => p.id == _planId, orElse: () => _plans.first);
++
++  void _setMessage(String? m, {bool ok = false}) =>
++      setState(() {
++        _message = m;
++        _messageOk = ok;
++      });
++
++  Future<void> _buy() async {
++    final svc = SubscriptionService.instance;
++    final session = context.read<AppSession>();
++    final pkg = svc.packageFor(_planId, _interval);
++    if (pkg == null) {
++      return _setMessage(
++          'This plan is not available to buy right now. Please try again later.');
++    }
++    setState(() {
++      _busy = true;
++      _message = null;
++    });
++    final out = await svc.purchase(pkg);
++    if (!mounted) return;
++    switch (out.status) {
++      case PurchaseStatus.success:
++        _rcConfirmed = true;
++        _setMessage('Purchase confirmed by RevenueCat. Syncing your account…', ok: true);
++        await _syncAccount(session);
++      case PurchaseStatus.cancelled:
++        _setMessage(null);
++      case PurchaseStatus.alreadySubscribed:
++        _rcConfirmed = true;
++        _setMessage(out.message, ok: true);
++        await _syncAccount(session);
++      default:
++        _setMessage(out.message ?? 'The purchase did not complete.');
++    }
++    if (mounted) setState(() => _busy = false);
++  }
++
++  Future<void> _syncAccount(AppSession session) async {
++    final paid = await session.refreshEntitlement(waitForPaid: true);
++    if (!mounted) return;
++    _setMessage(
++      paid
++          ? 'You are subscribed to ${_plan.name} (${_interval.label.toLowerCase()}). Thank you!'
++          : 'Your purchase is confirmed by RevenueCat, but your SKOUTAR account is '
++              'still syncing. This can take a minute. You can continue; your plan '
++              'updates automatically.',
++      ok: true,
++    );
++  }
++
++  Future<void> _restore() async {
++    final svc = SubscriptionService.instance;
++    final session = context.read<AppSession>();
++    setState(() {
++      _busy = true;
++      _message = null;
++    });
++    final out = await svc.restore();
++    if (!mounted) return;
++    if (out.isSuccess) {
++      _rcConfirmed = true;
++      _setMessage('Purchases restored. Syncing your account…', ok: true);
++      await _syncAccount(session);
++    } else {
++      _setMessage(out.message ?? 'Nothing to restore.');
++    }
++    if (mounted) setState(() => _busy = false);
++  }
++
++  Future<void> _manage() async {
++    final svc = SubscriptionService.instance;
++    try {
++      await RevenueCatUI.presentCustomerCenter();
++    } catch (_) {
++      final url = svc.managementUrl;
++      if (url != null) {
++        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
++      } else {
++        _setMessage('Open your App Store / Google Play subscriptions to manage this plan.');
++      }
++    } finally {
++      await svc.refresh();
++      if (mounted) await context.read<AppSession>().refreshEntitlement();
++    }
++  }
++
++  Future<void> _openLink(String url, String name) async {
++    if (url.isEmpty) {
++      ScaffoldMessenger.of(context).showSnackBar(
++        SnackBar(content: Text('The $name link has not been published yet.')),
++      );
++      return;
++    }
++    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
++  }
++
++  void _continue() {
++    if (widget.asGate) {
++      context.read<AppSession>().dismissSubscribePrompt();
++    } else {
++      Navigator.of(context).maybePop();
++    }
++  }
++
++  // ── pieces ──────────────────────────────────────────────────
++
++  String _dateText(DateTime d) =>
++      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
++
++  Widget _statusCard(AppUser? u, SubscriptionService svc) {
++    String title;
++    String detail;
++    final subscribed = svc.hasPaidEntitlement || (u?.paid ?? false);
++    if (subscribed) {
++      final prod = svc.activeProduct;
++      final plan = prod?.planId ?? u?.planId;
++      final name = _plans.where((p) => p.id == plan).map((p) => p.name).firstOrNull ??
++          u?.planName ??
++          'SKOUTAR';
++      final interval = prod?.interval.label ??
++          (u?.billingInterval == null
++              ? ''
++              : BillingIntervalX.fromString(u!.billingInterval).label);
++      title = 'Subscribed · $name${interval.isEmpty ? '' : ' · $interval'}';
++      final end = svc.entitlementExpires ?? u?.periodEnd;
++      final willRenew = svc.hasPaidEntitlement ? svc.entitlementWillRenew : !(u?.cancelAtPeriodEnd ?? false);
++      detail = end == null
++          ? 'Active'
++          : willRenew
++              ? 'Renews ${_dateText(end)}'
++              : 'Ends ${_dateText(end)}';
++      if (svc.hasPaidEntitlement && !(u?.paid ?? false)) {
++        detail += ' · syncing with your account';
++      }
++    } else if (u?.subscriptionStatus == 'trialing' &&
++        u?.trialEnd != null &&
++        u!.trialEnd!.isAfter(DateTime.now())) {
++      title = 'Free trial';
++      detail = 'Trial ends ${_dateText(u.trialEnd!)}. Subscribe any time to keep access.';
++    } else {
++      title = 'No active subscription';
++      detail = 'Choose a plan below.';
++    }
++    return Container(
++      width: double.infinity,
++      padding: const EdgeInsets.all(12),
++      margin: const EdgeInsets.only(bottom: 12),
++      decoration: BoxDecoration(
++        color: AppColors.surfaceAlt,
++        border: Border.all(color: AppColors.colBorder),
++        borderRadius: BorderRadius.circular(8),
++      ),
++      child: Column(
++        crossAxisAlignment: CrossAxisAlignment.start,
++        children: [
++          Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
++          const SizedBox(height: 2),
++          Text(detail, style: const TextStyle(fontSize: 12, color: AppColors.colMuted)),
++        ],
++      ),
++    );
++  }
++
++  Widget _intervalToggle() {
++    Widget seg(BillingInterval i) {
++      final sel = _interval == i;
++      return Expanded(
++        child: InkWell(
++          borderRadius: BorderRadius.circular(8),
++          onTap: _busy ? null : () => setState(() => _interval = i),
++          child: Container(
++            padding: const EdgeInsets.symmetric(vertical: 10),
++            alignment: Alignment.center,
++            decoration: BoxDecoration(
++              borderRadius: BorderRadius.circular(8),
++              border: Border.all(
++                  color: sel ? AppColors.brandOrangeDeep : AppColors.colBorder, width: 2),
++              color: sel ? AppColors.tint : Colors.white,
++            ),
++            child: Text(i.label,
++                style: TextStyle(
++                    fontWeight: FontWeight.w900,
++                    color: sel ? AppColors.brandOrangeDeep : AppColors.ink)),
++          ),
++        ),
++      );
++    }
++
++    return Row(children: [
++      seg(BillingInterval.monthly),
++      const SizedBox(width: 8),
++      seg(BillingInterval.yearly),
++    ]);
++  }
++
++  /// "7-day free trial" etc. when the STORE product has a free intro offer.
++  String? _storeTrialText(Package? pkg) {
++    final intro = pkg?.storeProduct.introductoryPrice;
++    if (intro == null || intro.price != 0) return null;
++    final n = intro.periodNumberOfUnits;
++    switch (intro.periodUnit) {
++      case PeriodUnit.day:
++        return '$n-day free trial';
++      case PeriodUnit.week:
++        return '${n * 7}-day free trial';
++      case PeriodUnit.month:
++        return '$n-month free trial';
++      default:
++        return 'Free trial included';
++    }
++  }
++
++  Widget _planCard(SubscriptionPlan p, SubscriptionService svc, int pitcherCount) {
++    final selected = _planId == p.id;
++    final pkg = svc.packageFor(p.id, _interval);
++    final live = svc.priceLabelFor(p.id, _interval); // localized, from RevenueCat
++    final price = live ??
++        (_interval == BillingInterval.monthly
++            ? p.priceLabel
++            : 'Price shown at checkout');
++    final trial = _storeTrialText(pkg);
++    return InkWell(
++      borderRadius: BorderRadius.circular(10),
++      onTap: _busy ? null : () => setState(() => _planId = p.id),
++      child: Container(
++        width: double.infinity,
++        margin: const EdgeInsets.only(bottom: 10),
++        padding: const EdgeInsets.all(14),
++        decoration: BoxDecoration(
++          border: Border.all(
++              color: selected ? AppColors.brandOrangeDeep : AppColors.colBorder, width: 2),
++          borderRadius: BorderRadius.circular(10),
++          color: selected ? AppColors.tint : Colors.white,
++        ),
++        child: Column(
++          crossAxisAlignment: CrossAxisAlignment.start,
++          children: [
++            Row(children: [
++              Icon(selected ? Icons.radio_button_checked : Icons.radio_button_off,
++                  size: 20,
++                  color: selected ? AppColors.brandOrangeDeep : AppColors.colMuted),
++              const SizedBox(width: 8),
++              Expanded(
++                child: Text(p.name,
++                    style: const TextStyle(
++                        fontWeight: FontWeight.w900, fontSize: 17, color: AppColors.ink)),
++              ),
++              Text(price,
++                  style: const TextStyle(
++                      fontWeight: FontWeight.w800,
++                      fontSize: 14,
++                      color: AppColors.brandOrangeDeep)),
++            ]),
++            const SizedBox(height: 4),
++            Text(
++              p.pitcherLimit == 1
++                  ? '1 pitcher profile'
++                  : 'Up to ${p.pitcherLimit} pitcher profiles',
++              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
++            ),
++            if (trial != null)
++              Text(trial,
++                  style: const TextStyle(
++                      fontSize: 12,
++                      fontWeight: FontWeight.w700,
++                      color: AppColors.perfExcellent)),
++            if (pitcherCount > p.pitcherLimit)
++              Padding(
++                padding: const EdgeInsets.only(top: 4),
++                child: Text(
++                  'You have $pitcherCount pitcher profiles; this plan covers ${p.pitcherLimit}.',
++                  style: const TextStyle(fontSize: 12, color: AppColors.colError),
++                ),
++              ),
++          ],
++        ),
++      ),
++    );
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    final session = context.watch<AppSession>();
++    final user = session.currentUser;
++    return Scaffold(
++      backgroundColor: AppColors.pageBg,
++      appBar: widget.asGate
++          ? null
++          : AppBar(title: const Text('Subscription')),
++      body: SafeArea(
++        child: Center(
++          child: SingleChildScrollView(
++            padding: const EdgeInsets.all(20),
++            child: ConstrainedBox(
++              constraints: const BoxConstraints(maxWidth: 520),
++              child: ListenableBuilder(
++                listenable: SubscriptionService.instance,
++                builder: (context, _) => _body(session, user),
++              ),
++            ),
++          ),
++        ),
++      ),
++    );
++  }
++
++  Widget _body(AppSession session, AppUser? user) {
++    final svc = SubscriptionService.instance;
++    final pkg = svc.packageFor(_planId, _interval);
++    final canBuy = svc.isConfigured && pkg != null && !_busy && !svc.purchaseInFlight;
++    final subscribed = svc.hasPaidEntitlement || (user?.paid ?? false);
++    final buyLabel = pkg == null
++        ? 'Subscribe'
++        : 'Subscribe · ${pkg.storeProduct.priceString} / ${_interval.unit}';
++
++    return Column(
++      crossAxisAlignment: CrossAxisAlignment.stretch,
++      children: [
++        if (widget.asGate)
++          const Padding(
++            padding: EdgeInsets.only(bottom: 8),
++            child: Text('Start your SKOUTAR subscription',
++                textAlign: TextAlign.center,
++                style: TextStyle(
++                    fontSize: 22, fontWeight: FontWeight.w900, color: AppColors.ink)),
++          ),
++        _statusCard(user, svc),
++        if (!svc.isSupported)
++          const Padding(
++            padding: EdgeInsets.only(bottom: 12),
++            child: Text(
++              'Subscriptions are purchased in the SKOUTAR iOS or Android app. '
++              'Your plan and status sync to your account.',
++              style: TextStyle(fontSize: 12, color: AppColors.colMuted),
++            ),
++          )
++        else if (!svc.isConfigured)
++          const Padding(
++            padding: EdgeInsets.only(bottom: 12),
++            child: Text('Purchases are not set up in this build yet.',
++                style: TextStyle(fontSize: 12, color: AppColors.colError)),
++          ),
++        const Text('Choose your plan',
++            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
++        const SizedBox(height: 8),
++        _intervalToggle(),
++        const SizedBox(height: 10),
++        if (svc.isConfigured && svc.isLoading && !svc.hasOfferings)
++          const Padding(
++            padding: EdgeInsets.all(16),
++            child: Center(child: CircularProgressIndicator()),
++          )
++        else
++          for (final p in _plans) _planCard(p, svc, session.pitchers.length),
++        if (_message != null)
++          Container(
++            margin: const EdgeInsets.only(bottom: 10),
++            padding: const EdgeInsets.all(10),
++            decoration: BoxDecoration(
++              color: _messageOk ? const Color(0xFFEAF7EE) : const Color(0xFFFDECEC),
++              borderRadius: BorderRadius.circular(8),
++              border: Border.all(
++                  color: _messageOk ? AppColors.colSuccess : AppColors.colError),
++            ),
++            child: Text(_message!, style: const TextStyle(fontSize: 13)),
++          ),
++        if (!subscribed || !_rcConfirmed)
++          OrangeGlowButton(
++            onPressed: canBuy && !subscribed ? _buy : null,
++            child: _busy
++                ? const SizedBox(
++                    height: 18,
++                    width: 18,
++                    child: CircularProgressIndicator(
++                        strokeWidth: 2, color: AppColors.brandOrangeDeep))
++                : Text(subscribed ? 'You are subscribed' : buyLabel),
++          ),
++        if (_rcConfirmed || subscribed)
++          Padding(
++            padding: const EdgeInsets.only(top: 8),
++            child: OrangeGlowButton(
++              onPressed: _continue,
++              child: Text(widget.asGate ? 'Continue to SKOUTAR →' : 'Done'),
++            ),
++          ),
++        const SizedBox(height: 8),
++        if (svc.isConfigured)
++          Wrap(
++            alignment: WrapAlignment.center,
++            children: [
++              TextButton(
++                onPressed: _busy ? null : _restore,
++                child: const Text('Restore purchases'),
++              ),
++              if (subscribed)
++                TextButton(
++                  onPressed: _busy ? null : _manage,
++                  child: const Text('Manage subscription'),
++                ),
++            ],
++          ),
++        if (widget.asGate && !_rcConfirmed)
++          Center(
++            child: TextButton(
++              onPressed: _busy ? null : _continue,
++              child: const Text('Not now'),
++            ),
++          ),
++        const SizedBox(height: 8),
++        const Text(
++          'Payment is charged to your Apple ID or Google Play account when you '
++          'confirm. Subscriptions renew automatically at the price shown unless '
++          'cancelled in your store account settings at least 24 hours before the '
++          'period ends.',
++          style: TextStyle(fontSize: 11, color: AppColors.colMuted),
++        ),
++        Wrap(
++          alignment: WrapAlignment.center,
++          children: [
++            TextButton(
++              onPressed: () => _openLink(LegalConfig.termsUrl, 'Terms of Service'),
++              child: const Text('Terms of Service'),
++            ),
++            TextButton(
++              onPressed: () => _openLink(LegalConfig.privacyUrl, 'Privacy Policy'),
++              child: const Text('Privacy Policy'),
++            ),
++          ],
++        ),
++      ],
++    );
++  }
++}
+diff --git a/lib/services/app_session.dart b/lib/services/app_session.dart
+index 63d9015..7a4a816 100644
+--- a/lib/services/app_session.dart
++++ b/lib/services/app_session.dart
+@@ -11,6 +11,7 @@ import 'pitcher_service.dart';
+ import 'storage_service.dart';
+ import 'scouting_report_cache.dart';
+ import 'remembered_account_service.dart';
++import '../subscriptions/subscription_service.dart';
+ 
+ /// ══════════════════════════════════════════════════════════════
+ /// APP SESSION
+@@ -542,8 +543,51 @@ class AppSession extends ChangeNotifier {
+     notifyListeners();
+   }
+ 
++  // ── subscription ─────────────────────────────────────────────
++  bool _subscribePromptDismissed = false;
++
++  bool get hasPaidSubscription => currentUser?.paid ?? false;
++
++  /// Show the subscribe screen right after login? Only on devices that can
++  /// buy (iOS/Android), only when nothing is paid yet, and only if the person
++  /// has no meaningful trial left (or has just created the account).
++  bool get shouldOfferSubscription {
++    final u = currentUser;
++    if (u == null || u.paid || _subscribePromptDismissed) return false;
++    if (!SubscriptionService.instance.isSupported) return false;
++    final trialActive = u.subscriptionStatus == 'trialing' &&
++        u.trialEnd != null &&
++        u.trialEnd!.isAfter(DateTime.now());
++    final justCreated = DateTime.now().difference(u.createdAt) < const Duration(hours: 24);
++    return !trialActive || justCreated;
++  }
++
++  void dismissSubscribePrompt() {
++    _subscribePromptDismissed = true;
++    notifyListeners();
++  }
++
++  /// Re-reads get_my_entitlement(). With [waitForPaid] it polls a few times,
++  /// because the verified webhook that marks the account paid can arrive a few
++  /// seconds after the store purchase. Returns whether the SERVER says paid.
++  Future<bool> refreshEntitlement({bool waitForPaid = false}) async {
++    for (var attempt = 0; attempt < (waitForPaid ? 8 : 1); attempt++) {
++      final e = await auth.fetchEntitlement();
++      if (e != null && currentUser != null) {
++        currentUser!.applyEntitlement(e);
++        notifyListeners();
++        if (currentUser!.paid) return true;
++      }
++      if (!waitForPaid) break;
++      await Future.delayed(const Duration(seconds: 2));
++    }
++    return currentUser?.paid ?? false;
++  }
++
+   Future<void> login(AppUser user) async {
+     currentUser = user;
++    // Link store purchases to this account (the owner's id; pitcher profiles share it).
++    unawaited(SubscriptionService.instance.identify(user.id));
+     await refreshPitchers(keepActive: false);
+     await _loadActivePitcherData();
+     notifyListeners();
+@@ -626,6 +670,8 @@ class AppSession extends ChangeNotifier {
+   Future<void> logout() async {
+     await flushPendingWrites();
+     await auth.logout();
++    await SubscriptionService.instance.reset();
++    _subscribePromptDismissed = false;
+     scoutingReport.reset();
+     currentUser = null;
+     pitchers = [];
+diff --git a/lib/services/auth_service.dart b/lib/services/auth_service.dart
+index 45689e5..265541e 100644
+--- a/lib/services/auth_service.dart
++++ b/lib/services/auth_service.dart
+@@ -64,6 +64,17 @@ class AuthService {
+     );
+   }
+ 
++  /// Re-reads the server-computed entitlement (plan, status, paid flag).
++  /// Null if the function is unavailable or there is no session.
++  Future<Map<String, dynamic>?> fetchEntitlement() async {
++    if (sb.auth.currentSession == null) return null;
++    try {
++      final r = await sb.rpc('get_my_entitlement');
++      if (r is Map) return Map<String, dynamic>.from(r);
++    } catch (_) {}
++    return null;
++  }
++
+   /// Call once at startup: if a Supabase session was persisted from a
+   /// previous visit (same browser/device), rebuilds the [AppUser] from
+   /// it so the person doesn't have to log in again. Returns null if
+@@ -158,6 +169,7 @@ class AuthService {
+     required String planId,
+     required int pitcherLimit,
+     required String termsVersion,
++    String billingInterval = 'monthly', // remembered so checkout can preselect it; grants nothing
+   }) async {
+     if (!isValidEmail(email)) {
+       return AuthResult(success: false, message: 'Enter a valid email address.');
+@@ -190,6 +202,7 @@ class AuthService {
+           // a username: use the first pitcher's.
+           'username': pitchers.first.username.trim(),
+           'plan_id': planId,
++          'billing_interval': billingInterval == 'yearly' ? 'yearly' : 'monthly',
+           'terms_version': termsVersion,
+           'pitchers': pitchers.map((d) => d.toJson()).toList(),
+         },
+diff --git a/lib/services/billing_service.dart b/lib/services/billing_service.dart
+index 4321b30..4cc0a8c 100644
+--- a/lib/services/billing_service.dart
++++ b/lib/services/billing_service.dart
+@@ -1,42 +1,32 @@
++import '../subscriptions/revenuecat_config.dart';
++import '../subscriptions/subscription_service.dart';
++
+ /// ══════════════════════════════════════════════════════════════
+-/// BILLING — INTEGRATION POINT (no payments are active)
+-///
+-/// Nothing in this app charges money or marks anyone as having paid.
+-/// Choosing a plan at sign-up only records WHICH plan was picked
+-/// (`user_subscriptions`, status 'trialing' if the plan has a trial_days value,
+-/// otherwise 'pending'). What a person can access is decided on the server by
+-/// `get_my_entitlement()`; the client can never self-report "I paid".
+-///
+-/// Prices, trial length and member limits live in `subscription_plans`
+-/// (editable in Supabase), not in app code.
++/// BILLING (RevenueCat)
+ ///
+-/// To add real billing later, keep the same shape:
+-///   1. App asks YOUR backend to start checkout for a plan id.
+-///   2. Web/desktop -> Stripe Checkout; iOS -> Apple In-App Purchase;
+-///      Android -> Google Play Billing (often via RevenueCat). Apple and Google
+-///      require their own billing for digital subscriptions sold in their apps —
+-///      a web checkout does NOT automatically satisfy store rules.
+-///   3. The provider calls a WEBHOOK (Supabase Edge Function). It must verify
+-///      the provider's signature, then use the service-role key (server-side
+-///      only) to update `user_subscriptions` (status, current_period_end,
+-///      billing_provider / billing_customer_id / billing_subscription_id).
+-///   4. The app just re-reads get_my_entitlement().
++/// Real purchases are made through [SubscriptionService] (RevenueCat, entitlement
++/// `skoutar_pro`). Nothing the app does can mark an account as paid: the
++/// RevenueCat webhook (supabase/functions/revenuecat-webhook, signature-checked,
++/// service-role only on the server) writes `user_subscriptions`, and the app
++/// reads the result from the server function `get_my_entitlement()`.
+ ///
+-/// The service-role key and any payment-provider secret key must never be put
+-/// in Flutter code, GitHub, or the public website.
++/// This class is kept as a small facade so older call sites keep compiling.
+ /// ══════════════════════════════════════════════════════════════
+ class BillingService {
+-  /// Kick off checkout for [planId]. Not implemented on purpose.
+-  Future<void> startCheckout({required String planId}) async {
+-    throw UnimplementedError(
+-      'Billing is not active. Wire this to a backend-created Stripe Checkout '
+-      'session (web/desktop) or store billing (iOS/Android) first.',
+-    );
+-  }
++  final SubscriptionService _svc = SubscriptionService.instance;
+ 
+-  /// Re-sync entitlement after a restart / device switch. With real billing
+-  /// this asks the backend (or RevenueCat) for the current subscription state.
+-  Future<void> restorePurchases() async {
+-    throw UnimplementedError('Billing is not active.');
++  /// Buys [planId] ('individual' | 'family' | 'team') at [interval].
++  Future<PurchaseOutcome> startCheckout({
++    required String planId,
++    BillingInterval interval = BillingInterval.monthly,
++  }) async {
++    final pkg = _svc.packageFor(planId, interval);
++    if (pkg == null) {
++      return const PurchaseOutcome(
++          PurchaseStatus.unsupported, 'That plan is not available to buy right now.');
++    }
++    return _svc.purchase(pkg);
+   }
++
++  Future<PurchaseOutcome> restorePurchases() => _svc.restore();
+ }
+diff --git a/lib/subscriptions/revenuecat_config.dart b/lib/subscriptions/revenuecat_config.dart
+new file mode 100644
+index 0000000..ec69f64
+--- /dev/null
++++ b/lib/subscriptions/revenuecat_config.dart
+@@ -0,0 +1,102 @@
++import 'package:flutter/foundation.dart';
++
++/// Billing interval of a SKOUTAR subscription.
++enum BillingInterval { monthly, yearly }
++
++extension BillingIntervalX on BillingInterval {
++  String get label => this == BillingInterval.monthly ? 'Monthly' : 'Yearly';
++  String get unit => this == BillingInterval.monthly ? 'month' : 'year';
++  static BillingInterval fromString(String? s) =>
++      s == 'yearly' ? BillingInterval.yearly : BillingInterval.monthly;
++}
++
++/// One purchasable SKOUTAR product and where it lives in RevenueCat.
++class PlanProduct {
++  const PlanProduct(this.planId, this.interval, this.offeringId, this.productId);
++
++  /// SKOUTAR plan id in `subscription_plans`: individual | family | team.
++  final String planId;
++  final BillingInterval interval;
++
++  /// RevenueCat offering that holds this product (as configured in the dashboard).
++  final String offeringId;
++
++  /// Store product identifier (RevenueCat Product ID).
++  final String productId;
++}
++
++/// RevenueCat identifiers. They mirror the dashboard exactly; nothing here
++/// creates or renames anything in RevenueCat.
++class RevenueCatConfig {
++  RevenueCatConfig._();
++
++  /// Shared by all six products. Access = this entitlement is active.
++  static const String entitlementId = 'skoutar_pro';
++
++  /// Six plan x interval products, each in its own offering. (The `default`
++  /// offering also holds the Individual monthly/yearly packages; the lookup in
++  /// SubscriptionService.packageFor() falls back to any offering that contains
++  /// the product.)
++  static const List<PlanProduct> products = [
++    PlanProduct('individual', BillingInterval.monthly, 'individual_monthly', 'monthly'),
++    PlanProduct('individual', BillingInterval.yearly, 'individual_yearly', 'yearly'),
++    PlanProduct('family', BillingInterval.monthly, 'family_monthly', 'family_monthly'),
++    PlanProduct('family', BillingInterval.yearly, 'family_yearly', 'family_yearly'),
++    PlanProduct('team', BillingInterval.monthly, 'team_monthly', 'team_monthly'),
++    PlanProduct('team', BillingInterval.yearly, 'team_yearly', 'team_yearly'),
++  ];
++
++  static PlanProduct? lookup(String planId, BillingInterval interval) {
++    for (final p in products) {
++      if (p.planId == planId && p.interval == interval) return p;
++    }
++    return null;
++  }
++
++  /// Google Play ids can look like `family_monthly:base-plan`; compare the part
++  /// before the colon.
++  static String normalizeProductId(String id) => id.split(':').first;
++
++  static PlanProduct? byProductId(String? id) {
++    if (id == null) return null;
++    final n = normalizeProductId(id);
++    for (final p in products) {
++      if (p.productId == n) return p;
++    }
++    return null;
++  }
++
++  // ── SDK keys ────────────────────────────────────────────────────────────
++  // PUBLIC SDK keys only (never a RevenueCat secret `sk_` key). Supply at build
++  // time, like SUPABASE_ANON_KEY:
++  //   flutter run --dart-define=REVENUECAT_API_KEY=<key>            (one key for all platforms, e.g. Test Store)
++  //   flutter build apk --dart-define=REVENUECAT_API_KEY_ANDROID=goog_...
++  //   flutter build ios --dart-define=REVENUECAT_API_KEY_IOS=appl_...
++  static const String _anyKey = String.fromEnvironment('REVENUECAT_API_KEY');
++  static const String _iosKey = String.fromEnvironment('REVENUECAT_API_KEY_IOS');
++  static const String _androidKey = String.fromEnvironment('REVENUECAT_API_KEY_ANDROID');
++
++  /// Debug builds only: the project's RevenueCat Test Store public key, so
++  /// `flutter run` works without a --dart-define. Release builds ignore this and
++  /// need a real key (RevenueCat refuses Test Store keys in release builds).
++  static const String _debugTestStoreKey = 'test_xZFMHRlvelkLGYpiqVZDzkFeGrn';
++
++  /// Purchases run on iOS and Android only.
++  static bool get isPlatformSupported {
++    if (kIsWeb) return false;
++    return defaultTargetPlatform == TargetPlatform.iOS ||
++        defaultTargetPlatform == TargetPlatform.android;
++  }
++
++  /// The key for this platform, or null when none is configured (the app then
++  /// simply shows "purchases unavailable" instead of failing).
++  static String? get apiKey {
++    if (!isPlatformSupported) return null;
++    final platform =
++        defaultTargetPlatform == TargetPlatform.iOS ? _iosKey : _androidKey;
++    if (platform.isNotEmpty) return platform;
++    if (_anyKey.isNotEmpty) return _anyKey;
++    if (kDebugMode) return _debugTestStoreKey;
++    return null;
++  }
++}
+diff --git a/lib/subscriptions/subscription_service.dart b/lib/subscriptions/subscription_service.dart
+new file mode 100644
+index 0000000..90625c8
+--- /dev/null
++++ b/lib/subscriptions/subscription_service.dart
+@@ -0,0 +1,315 @@
++import 'dart:async';
++
++import 'package:flutter/foundation.dart';
++import 'package:flutter/services.dart';
++import 'package:purchases_flutter/purchases_flutter.dart';
++
++import 'revenuecat_config.dart';
++
++enum PurchaseStatus {
++  /// RevenueCat confirmed `skoutar_pro` is active.
++  success,
++  cancelled,
++  pending,
++  alreadySubscribed,
++
++  /// Already subscribed to a DIFFERENT product: change it from Manage subscription.
++  useManage,
++  unsupported,
++  failed,
++}
++
++class PurchaseOutcome {
++  const PurchaseOutcome(this.status, [this.message]);
++  final PurchaseStatus status;
++  final String? message;
++  bool get isSuccess => status == PurchaseStatus.success;
++}
++
++/// All RevenueCat access for SKOUTAR. A ChangeNotifier singleton (same style as
++/// AppSession). It never decides what the account may do: that is the server's
++/// get_my_entitlement(). This service only runs purchases and reports what the
++/// store/RevenueCat say.
++class SubscriptionService extends ChangeNotifier {
++  SubscriptionService._();
++  static final SubscriptionService instance = SubscriptionService._();
++
++  bool _configured = false;
++  bool _loading = false;
++  bool _purchaseInFlight = false;
++  String? _appUserId; // Supabase user id currently linked to RevenueCat
++  CustomerInfo? _customerInfo;
++  Offerings? _offerings;
++  String? _error;
++
++  bool get isSupported => RevenueCatConfig.isPlatformSupported;
++  bool get isConfigured => _configured;
++  bool get isLoading => _loading;
++  bool get purchaseInFlight => _purchaseInFlight;
++  String? get lastError => _error;
++  CustomerInfo? get customerInfo => _customerInfo;
++  Offerings? get offerings => _offerings;
++  bool get hasOfferings => (_offerings?.all.isNotEmpty ?? false);
++
++  // ── entitlement (client view; the server's copy is what grants access) ───
++  EntitlementInfo? get entitlement =>
++      _customerInfo?.entitlements.all[RevenueCatConfig.entitlementId];
++
++  bool get hasPaidEntitlement => entitlement?.isActive ?? false;
++
++  /// Which SKOUTAR product the active entitlement came from.
++  PlanProduct? get activeProduct => hasPaidEntitlement
++      ? RevenueCatConfig.byProductId(entitlement?.productIdentifier)
++      : null;
++
++  DateTime? get entitlementExpires {
++    final raw = entitlement?.expirationDate;
++    return raw == null ? null : DateTime.tryParse(raw)?.toLocal();
++  }
++
++  bool get entitlementWillRenew => entitlement?.willRenew ?? false;
++
++  String? get managementUrl => _customerInfo?.managementURL;
++
++  // ── setup ────────────────────────────────────────────────────────────────
++
++  /// Call once at startup. Never throws; with no key / unsupported platform it
++  /// is a no-op and the app keeps working without purchases.
++  Future<void> init() async {
++    if (_configured || !isSupported) return;
++    final key = RevenueCatConfig.apiKey;
++    if (key == null || key.isEmpty) {
++      _error = 'Purchases are not configured in this build.';
++      return;
++    }
++    try {
++      await Purchases.setLogLevel(kDebugMode ? LogLevel.debug : LogLevel.warn);
++      await Purchases.configure(PurchasesConfiguration(key));
++      _configured = true;
++      Purchases.addCustomerInfoUpdateListener(_onCustomerInfo);
++      await refresh();
++    } catch (e, st) {
++      _error = 'Purchases could not start.';
++      debugPrint('RevenueCat init failed: $e\n$st');
++      notifyListeners();
++    }
++  }
++
++  void _onCustomerInfo(CustomerInfo info) {
++    _customerInfo = info;
++    notifyListeners();
++  }
++
++  /// Link RevenueCat to the signed-in Supabase user (their auth uuid). The
++  /// server webhook relies on this id to find the right account.
++  Future<void> identify(String supabaseUserId) async {
++    if (!_configured) return;
++    try {
++      final result = await Purchases.logIn(supabaseUserId);
++      _customerInfo = result.customerInfo;
++      _appUserId = supabaseUserId;
++      _error = null;
++    } catch (e) {
++      _error = _friendly(e);
++    }
++    notifyListeners();
++    await _loadOfferings();
++  }
++
++  /// Sign-out: detach RevenueCat from this account.
++  Future<void> reset() async {
++    _appUserId = null;
++    if (!_configured) return;
++    try {
++      if (!await Purchases.isAnonymous) {
++        _customerInfo = await Purchases.logOut();
++      }
++    } catch (e) {
++      debugPrint('RevenueCat logOut: $e');
++    }
++    notifyListeners();
++  }
++
++  Future<void> refresh() async {
++    if (!_configured) return;
++    _loading = true;
++    notifyListeners();
++    try {
++      _customerInfo = await Purchases.getCustomerInfo();
++      _error = null;
++    } catch (e) {
++      _error = _friendly(e);
++    }
++    await _loadOfferings(notify: false);
++    _loading = false;
++    notifyListeners();
++  }
++
++  Future<void> _loadOfferings({bool notify = true}) async {
++    try {
++      _offerings = await Purchases.getOfferings();
++    } catch (e) {
++      _error = _friendly(e);
++    }
++    if (notify) notifyListeners();
++  }
++
++  // ── products ─────────────────────────────────────────────────────────────
++
++  /// The package for a plan + billing interval. Looks in that product's own
++  /// offering first, then in any offering that contains the product (so the
++  /// Individual products also resolve through the `default` offering).
++  Package? packageFor(String planId, BillingInterval interval) {
++    final ref = RevenueCatConfig.lookup(planId, interval);
++    final all = _offerings?.all;
++    if (ref == null || all == null) return null;
++
++    Package? pick(Offering? o) {
++      if (o == null) return null;
++      for (final p in o.availablePackages) {
++        if (RevenueCatConfig.normalizeProductId(p.storeProduct.identifier) ==
++            ref.productId) {
++          return p;
++        }
++      }
++      return null;
++    }
++
++    final direct = pick(all[ref.offeringId]);
++    if (direct != null) return direct;
++    for (final o in all.values) {
++      final p = pick(o);
++      if (p != null) return p;
++    }
++    return null;
++  }
++
++  /// Localized price from the store, e.g. "$14.99 / month". Null if unavailable.
++  String? priceLabelFor(String planId, BillingInterval interval) {
++    final p = packageFor(planId, interval);
++    return p == null
++        ? null
++        : '${p.storeProduct.priceString} / ${interval.unit}';
++  }
++
++  // ── purchase / restore ───────────────────────────────────────────────────
++
++  Future<PurchaseOutcome> purchase(Package package) async {
++    if (!_configured) {
++      return const PurchaseOutcome(PurchaseStatus.unsupported,
++          'Purchases are not available in this build or on this device.');
++    }
++    if (_purchaseInFlight) {
++      return const PurchaseOutcome(
++          PurchaseStatus.pending, 'A purchase is already in progress.');
++    }
++    // A purchase must belong to a signed-in SKOUTAR account, or the server
++    // could never match it to anyone.
++    try {
++      if (_appUserId == null || await Purchases.isAnonymous) {
++        return const PurchaseOutcome(
++            PurchaseStatus.failed, 'Please sign in before subscribing.');
++      }
++    } catch (_) {
++      return const PurchaseOutcome(
++          PurchaseStatus.failed, 'Could not verify your account. Try again.');
++    }
++
++    // Retry / double-tap safety: never buy what is already active.
++    await refresh();
++    if (hasPaidEntitlement) {
++      final wanted =
++          RevenueCatConfig.normalizeProductId(package.storeProduct.identifier);
++      return activeProduct?.productId == wanted
++          ? const PurchaseOutcome(PurchaseStatus.alreadySubscribed,
++              'You are already subscribed to this plan.')
++          : const PurchaseOutcome(PurchaseStatus.useManage,
++              'You already have an active SKOUTAR subscription. To switch plans, use Manage subscription.');
++    }
++
++    _purchaseInFlight = true;
++    notifyListeners();
++    try {
++      final result = await Purchases.purchase(PurchaseParams.package(package));
++      _customerInfo = result.customerInfo;
++      _error = null;
++      // Only report success when RevenueCat itself says skoutar_pro is active.
++      if (hasPaidEntitlement) {
++        return const PurchaseOutcome(PurchaseStatus.success);
++      }
++      return const PurchaseOutcome(PurchaseStatus.failed,
++          'The store finished, but RevenueCat has not activated SKOUTAR Pro. Try Restore purchases in a moment.');
++    } on PlatformException catch (e) {
++      switch (PurchasesErrorHelper.getErrorCode(e)) {
++        case PurchasesErrorCode.purchaseCancelledError:
++          return const PurchaseOutcome(PurchaseStatus.cancelled);
++        case PurchasesErrorCode.paymentPendingError:
++          return const PurchaseOutcome(PurchaseStatus.pending,
++              'Your payment is pending approval. Access starts when it clears.');
++        case PurchasesErrorCode.productAlreadyPurchasedError:
++          await refresh();
++          return hasPaidEntitlement
++              ? const PurchaseOutcome(PurchaseStatus.alreadySubscribed,
++                  'You are already subscribed.')
++              : PurchaseOutcome(PurchaseStatus.failed, _friendly(e));
++        default:
++          _error = _friendly(e);
++          return PurchaseOutcome(PurchaseStatus.failed, _error);
++      }
++    } catch (e) {
++      _error = _friendly(e);
++      return PurchaseOutcome(PurchaseStatus.failed, _error);
++    } finally {
++      _purchaseInFlight = false;
++      notifyListeners();
++    }
++  }
++
++  Future<PurchaseOutcome> restore() async {
++    if (!_configured) {
++      return const PurchaseOutcome(
++          PurchaseStatus.unsupported, 'Purchases are not available here.');
++    }
++    try {
++      _customerInfo = await Purchases.restorePurchases();
++      _error = null;
++      notifyListeners();
++      return hasPaidEntitlement
++          ? const PurchaseOutcome(PurchaseStatus.success)
++          : const PurchaseOutcome(PurchaseStatus.failed,
++              'No active SKOUTAR subscription was found for this store account.');
++    } catch (e) {
++      _error = _friendly(e);
++      notifyListeners();
++      return PurchaseOutcome(PurchaseStatus.failed, _error);
++    }
++  }
++
++  String _friendly(Object e) {
++    if (e is PlatformException) {
++      switch (PurchasesErrorHelper.getErrorCode(e)) {
++        case PurchasesErrorCode.networkError:
++          return 'Network problem. Check your connection and try again.';
++        case PurchasesErrorCode.purchaseNotAllowedError:
++          return 'Purchases are not allowed on this device.';
++        case PurchasesErrorCode.storeProblemError:
++          return 'The app store had a problem. Please try again shortly.';
++        case PurchasesErrorCode.receiptAlreadyInUseError:
++          return 'That store purchase is already linked to another SKOUTAR account.';
++        case PurchasesErrorCode.configurationError:
++          return 'Subscription setup is incomplete. Please contact support.';
++        default:
++          return e.message ?? 'Something went wrong with your subscription.';
++      }
++    }
++    return 'Something went wrong with your subscription.';
++  }
++
++  @override
++  void dispose() {
++    if (_configured) {
++      Purchases.removeCustomerInfoUpdateListener(_onCustomerInfo);
++    }
++    super.dispose();
++  }
++}
+diff --git a/pubspec.yaml b/pubspec.yaml
+index f831fc6..59d2e3f 100644
+--- a/pubspec.yaml
++++ b/pubspec.yaml
+@@ -19,6 +19,8 @@ dependencies:
+   pdf: ^3.11.1                 # Builds the Scouting Report PDF export
+   printing: ^5.13.4            # Cross-platform "share/download/print" of the generated PDF
+   url_launcher: ^6.3.0         # Opens the Terms of Service / Privacy Policy links
++  purchases_flutter: ^10.10.0  # RevenueCat: in-app subscriptions (iOS / Android)
++  purchases_ui_flutter: ^10.10.0 # RevenueCat Customer Center
+ 
+ dev_dependencies:
+   flutter_test:
+diff --git a/supabase/functions/revenuecat-webhook/index.ts b/supabase/functions/revenuecat-webhook/index.ts
+new file mode 100644
+index 0000000..74c37d3
+--- /dev/null
++++ b/supabase/functions/revenuecat-webhook/index.ts
+@@ -0,0 +1,77 @@
++// Supabase Edge Function: revenuecat-webhook
++//
++// RevenueCat -> SKOUTAR. Marks an account's subscription paid / cancelled /
++// expired. This is the ONLY path that can mark an account paid.
++//
++// Deploy (RevenueCat does not send a Supabase JWT, so JWT verification is off;
++// the shared secret below is the authentication):
++//   supabase secrets set REVENUECAT_WEBHOOK_AUTH="<long random string>"
++//   supabase functions deploy revenuecat-webhook --no-verify-jwt
++//
++// RevenueCat dashboard -> Project settings -> Integrations -> Webhooks -> Add:
++//   URL:                   https://xmzdwoqvnnwhbnntziuk.supabase.co/functions/v1/revenuecat-webhook
++//   Authorization header:  the exact same string as REVENUECAT_WEBHOOK_AUTH
++//
++// The service-role key is injected by Supabase at runtime. It is never in the
++// Flutter app, the repo, or the website.
++
++import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
++import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
++
++const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
++const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
++const WEBHOOK_AUTH = Deno.env.get("REVENUECAT_WEBHOOK_AUTH") ?? "";
++const MAX_BODY_BYTES = 200_000;
++
++function json(body: unknown, status = 200): Response {
++  return new Response(JSON.stringify(body), {
++    status,
++    headers: { "Content-Type": "application/json" },
++  });
++}
++
++// Constant-time string comparison.
++function safeEqual(a: string, b: string): boolean {
++  const ea = new TextEncoder().encode(a);
++  const eb = new TextEncoder().encode(b);
++  let diff = ea.length ^ eb.length;
++  const len = Math.max(ea.length, eb.length);
++  for (let i = 0; i < len; i++) diff |= (ea[i] ?? 0) ^ (eb[i] ?? 0);
++  return diff === 0;
++}
++
++serve(async (req: Request) => {
++  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
++
++  // Fail closed: no secret configured -> nothing is accepted.
++  if (WEBHOOK_AUTH.length < 16) return json({ error: "Webhook not configured" }, 500);
++
++  const provided = req.headers.get("Authorization") ?? "";
++  if (!safeEqual(provided, WEBHOOK_AUTH)) return json({ error: "Unauthorized" }, 401);
++
++  const raw = await req.text();
++  if (raw.length > MAX_BODY_BYTES) return json({ error: "Payload too large" }, 413);
++
++  let event: Record<string, unknown> | undefined;
++  try {
++    event = JSON.parse(raw)?.event;
++  } catch {
++    return json({ error: "Invalid JSON" }, 400);
++  }
++  if (!event || typeof event.id !== "string" || typeof event.type !== "string") {
++    return json({ error: "Malformed event" }, 400);
++  }
++
++  const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
++    auth: { persistSession: false, autoRefreshToken: false },
++  });
++  const { data, error } = await admin.rpc("apply_revenuecat_event", { p: event });
++  if (error) {
++    console.error("apply_revenuecat_event failed", error.message);
++    return json({ error: "Processing failed" }, 500); // RevenueCat retries
++  }
++  const result = String(data);
++  // e.g. the signup row doesn't exist yet: ask RevenueCat to retry later.
++  if (result.startsWith("retry")) return json({ result }, 500);
++  return json({ result });
++});
+diff --git a/supabase_revenuecat_migration.sql b/supabase_revenuecat_migration.sql
+new file mode 100644
+index 0000000..c15d403
+--- /dev/null
++++ b/supabase_revenuecat_migration.sql
+@@ -0,0 +1,209 @@
++-- ════════════════════════════════════════════════════════════════════
++-- SKOUTAR: RevenueCat purchases -> Supabase (server side only)
++-- Run ONCE in the SQL Editor of project xmzdwoqvnnwhbnntziuk. Safe to re-run.
++-- Requires supabase_accounts_migration.sql and supabase_pitchers_migration.sql.
++--
++-- Security model
++--   * The app can NEVER mark an account paid. user_subscriptions is read-only
++--     for signed-in users (RLS, unchanged).
++--   * Only the Edge Function `revenuecat-webhook` (after checking RevenueCat's
++--     shared-secret Authorization header) calls apply_revenuecat_event(), which
++--     is executable by the service_role ONLY.
++--   * Which SKOUTAR plan a purchase buys comes from the STORE PRODUCT id via
++--     revenuecat_product_plans, never from anything the client sends.
++-- ════════════════════════════════════════════════════════════════════
++
++-- 1. Store product -> SKOUTAR plan (server-side source of truth)
++create table if not exists public.revenuecat_product_plans (
++  product_id       text primary key,
++  plan_id          text not null references public.subscription_plans(id),
++  billing_interval text not null check (billing_interval in ('monthly', 'yearly'))
++);
++
++insert into public.revenuecat_product_plans (product_id, plan_id, billing_interval) values
++  ('monthly',        'individual', 'monthly'),
++  ('yearly',         'individual', 'yearly'),
++  ('family_monthly', 'family',     'monthly'),
++  ('family_yearly',  'family',     'yearly'),
++  ('team_monthly',   'team',       'monthly'),
++  ('team_yearly',    'team',       'yearly')
++on conflict (product_id) do update
++  set plan_id = excluded.plan_id, billing_interval = excluded.billing_interval;
++
++-- 2. Webhook event log (dedupe + audit). No client access at all.
++create table if not exists public.revenuecat_events (
++  event_id     text primary key,
++  event_type   text not null,
++  app_user_id  text,
++  product_id   text,
++  event_ts_ms  bigint,
++  environment  text,
++  result       text,
++  received_at  timestamptz not null default now(),
++  payload      jsonb not null
++);
++
++-- 3. What the last verified purchase looked like
++alter table public.user_subscriptions
++  add column if not exists rc_product_id       text,
++  add column if not exists rc_billing_interval text,
++  add column if not exists rc_period_type      text,
++  add column if not exists rc_environment      text,
++  add column if not exists rc_last_event_ms    bigint;
++
++-- 4. Lock the new tables down (RLS on, no policies, no grants)
++alter table public.revenuecat_product_plans enable row level security;
++alter table public.revenuecat_events        enable row level security;
++revoke all on public.revenuecat_product_plans, public.revenuecat_events from anon, authenticated;
++
++-- 5. The only thing that can mark an account paid
++create or replace function public.apply_revenuecat_event(p jsonb)
++returns text language plpgsql security definer set search_path = public as $$
++declare
++  v_id      text := p->>'id';
++  v_type    text := p->>'type';
++  v_app     text := p->>'app_user_id';
++  v_raw     text := case when p->>'type' = 'PRODUCT_CHANGE'
++                         then coalesce(p->>'new_product_id', p->>'product_id')
++                         else p->>'product_id' end;
++  v_product text := split_part(coalesce(v_raw, ''), ':', 1);  -- Google: "family_monthly:base-plan"
++  v_ts      bigint := nullif(p->>'event_timestamp_ms', '')::bigint;
++  v_exp     timestamptz := case when nullif(p->>'expiration_at_ms', '') is null then null
++                                else to_timestamp((p->>'expiration_at_ms')::bigint / 1000.0) end;
++  v_period  text := p->>'period_type';
++  v_env     text := p->>'environment';
++  v_store   text := lower(coalesce(p->>'store', ''));
++  v_uid     uuid;
++  v_plan    text;
++  v_interval text;
++  v_sub     record;
++  v_result  text;
++begin
++  if v_id is null or v_type is null then raise exception 'Malformed event'; end if;
++
++  insert into public.revenuecat_events (event_id, event_type, app_user_id, product_id, event_ts_ms, environment, payload)
++  values (v_id, v_type, v_app, nullif(v_product, ''), v_ts, v_env, p)
++  on conflict (event_id) do nothing;
++  if not found then return 'duplicate'; end if;
++
++  <<body>>
++  begin
++    if v_type = 'TEST' then v_result := 'test'; exit body; end if;
++
++    -- Only real SKOUTAR accounts: the RevenueCat app user id IS the Supabase auth uuid.
++    if v_app is null or v_app !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
++      v_result := 'ignored_non_account_user'; exit body;
++    end if;
++    v_uid := v_app::uuid;
++    if not exists (select 1 from auth.users where id = v_uid) then v_result := 'ignored_unknown_user'; exit body; end if;
++
++    select * into v_sub from public.user_subscriptions where owner_id = v_uid for update;
++    if not found then v_result := 'retry_no_subscription_row'; exit body; end if;
++
++    if v_ts is not null and v_sub.rc_last_event_ms is not null and v_ts <= v_sub.rc_last_event_ms then
++      v_result := 'stale'; exit body;
++    end if;
++
++    if v_type in ('INITIAL_PURCHASE', 'RENEWAL', 'UNCANCELLATION', 'PRODUCT_CHANGE', 'SUBSCRIPTION_EXTENDED') then
++      select plan_id, billing_interval into v_plan, v_interval
++        from public.revenuecat_product_plans where product_id = v_product;
++      if v_plan is null then v_result := 'ignored_unknown_product'; exit body; end if;
++      if v_exp is not null and v_exp <= now() then v_result := 'ignored_already_expired'; exit body; end if;
++
++      update public.user_subscriptions set
++        plan_id               = v_plan,
++        status                = case when v_period = 'TRIAL' then 'trialing' else 'active' end,
++        trial_end             = case when v_period = 'TRIAL' then v_exp else trial_end end,
++        current_period_end    = v_exp,
++        cancel_at_period_end  = false,
++        billing_provider      = coalesce(nullif(v_store, ''), billing_provider),
++        billing_customer_id   = v_app,
++        billing_subscription_id = coalesce(p->>'original_transaction_id', billing_subscription_id),
++        rc_product_id         = v_product,
++        rc_billing_interval   = v_interval,
++        rc_period_type        = v_period,
++        rc_environment        = v_env,
++        rc_last_event_ms      = coalesce(v_ts, rc_last_event_ms),
++        updated_at            = now()
++      where id = v_sub.id;
++      v_result := 'applied';
++
++    elsif v_type = 'CANCELLATION' then
++      -- Cancelled at the store: access normally continues to the end of the paid period.
++      if v_sub.rc_product_id is not null and v_product <> '' and v_product <> v_sub.rc_product_id then
++        v_result := 'ignored_superseded_product'; exit body;
++      end if;
++      if p->>'cancel_reason' = 'CUSTOMER_SUPPORT' then   -- refunded: access ends now
++        update public.user_subscriptions set status = 'canceled', current_period_end = now(),
++               cancel_at_period_end = false, rc_last_event_ms = coalesce(v_ts, rc_last_event_ms), updated_at = now()
++         where id = v_sub.id;
++        v_result := 'applied_refund';
++      else
++        update public.user_subscriptions set cancel_at_period_end = true,
++               rc_last_event_ms = coalesce(v_ts, rc_last_event_ms), updated_at = now()
++         where id = v_sub.id;
++        v_result := 'applied';
++      end if;
++
++    elsif v_type = 'EXPIRATION' then
++      if v_sub.rc_product_id is not null and v_product <> '' and v_product <> v_sub.rc_product_id then
++        v_result := 'ignored_superseded_product'; exit body;   -- old product expiring after a plan change
++      end if;
++      update public.user_subscriptions set status = 'expired', current_period_end = coalesce(v_exp, now()),
++             cancel_at_period_end = false, rc_last_event_ms = coalesce(v_ts, rc_last_event_ms), updated_at = now()
++       where id = v_sub.id;
++      v_result := 'applied';
++
++    elsif v_type = 'BILLING_ISSUE' then
++      update public.user_subscriptions set status = 'past_due',
++             rc_last_event_ms = coalesce(v_ts, rc_last_event_ms), updated_at = now()
++       where id = v_sub.id and status = 'active';
++      v_result := 'applied';
++
++    else
++      v_result := 'ignored_' || lower(v_type);   -- TRANSFER, SUBSCRIPTION_PAUSED, ... (recorded, no change)
++    end if;
++  end;
++
++  update public.revenuecat_events set result = v_result where event_id = v_id;
++  return v_result;
++end $$;
++
++revoke all on function public.apply_revenuecat_event(jsonb) from public, anon, authenticated;
++grant execute on function public.apply_revenuecat_event(jsonb) to service_role;
++
++-- 6. get_my_entitlement(): same shape as before, plus the verified-payment fields.
++--    `tier` stays 'plus' for everyone (unchanged behaviour: no feature locking).
++--    To start requiring payment after the trial, change the tier line below to:
++--      case when coalesce(paid, false) or (trial_end is not null and trial_end > now()) then 'plus' else 'basic' end
++create or replace function public.get_my_entitlement()
++returns jsonb language plpgsql stable security definer set search_path = public as $$
++declare uid uuid := auth.uid(); o record;
++begin
++  if uid is null then return jsonb_build_object('tier', 'plus'); end if;
++  select s.plan_id, p.name as plan_name, s.status, s.trial_end, p.max_pitchers,
++         s.current_period_end, s.cancel_at_period_end, s.rc_billing_interval,
++         (s.status in ('active', 'past_due')
++            and (s.current_period_end is null or s.current_period_end > now())) as paid
++    into o
++    from public.user_subscriptions s join public.subscription_plans p on p.id = s.plan_id
++   where s.owner_id = uid;
++  return jsonb_build_object(
++    'tier',                 'plus',
++    'plan_id',              o.plan_id,
++    'plan_name',            o.plan_name,
++    'subscription_status',  o.status,
++    'trial_end',            o.trial_end,
++    'max_pitchers',         coalesce(o.max_pitchers, 1),
++    'paid',                 coalesce(o.paid, false),
++    'current_period_end',   o.current_period_end,
++    'cancel_at_period_end', coalesce(o.cancel_at_period_end, false),
++    'billing_interval',     o.rc_billing_interval
++  );
++end $$;
++
++notify pgrst, 'reload schema';
++
++-- Check:
++--   select * from public.revenuecat_product_plans;
++--   select event_type, result, received_at from public.revenuecat_events order by received_at desc limit 20;

@@ -11,6 +11,7 @@ import 'pitcher_service.dart';
 import 'storage_service.dart';
 import 'scouting_report_cache.dart';
 import 'remembered_account_service.dart';
+import '../subscriptions/subscription_service.dart';
 
 /// ══════════════════════════════════════════════════════════════
 /// APP SESSION
@@ -542,8 +543,51 @@ class AppSession extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ── subscription ─────────────────────────────────────────────
+  bool _subscribePromptDismissed = false;
+
+  bool get hasPaidSubscription => currentUser?.paid ?? false;
+
+  /// Show the subscribe screen right after login? Only on devices that can
+  /// buy (iOS/Android), only when nothing is paid yet, and only if the person
+  /// has no meaningful trial left (or has just created the account).
+  bool get shouldOfferSubscription {
+    final u = currentUser;
+    if (u == null || u.paid || _subscribePromptDismissed) return false;
+    if (!SubscriptionService.instance.isSupported) return false;
+    final trialActive = u.subscriptionStatus == 'trialing' &&
+        u.trialEnd != null &&
+        u.trialEnd!.isAfter(DateTime.now());
+    final justCreated = DateTime.now().difference(u.createdAt) < const Duration(hours: 24);
+    return !trialActive || justCreated;
+  }
+
+  void dismissSubscribePrompt() {
+    _subscribePromptDismissed = true;
+    notifyListeners();
+  }
+
+  /// Re-reads get_my_entitlement(). With [waitForPaid] it polls a few times,
+  /// because the verified webhook that marks the account paid can arrive a few
+  /// seconds after the store purchase. Returns whether the SERVER says paid.
+  Future<bool> refreshEntitlement({bool waitForPaid = false}) async {
+    for (var attempt = 0; attempt < (waitForPaid ? 8 : 1); attempt++) {
+      final e = await auth.fetchEntitlement();
+      if (e != null && currentUser != null) {
+        currentUser!.applyEntitlement(e);
+        notifyListeners();
+        if (currentUser!.paid) return true;
+      }
+      if (!waitForPaid) break;
+      await Future.delayed(const Duration(seconds: 2));
+    }
+    return currentUser?.paid ?? false;
+  }
+
   Future<void> login(AppUser user) async {
     currentUser = user;
+    // Link store purchases to this account (the owner's id; pitcher profiles share it).
+    unawaited(SubscriptionService.instance.identify(user.id));
     await refreshPitchers(keepActive: false);
     await _loadActivePitcherData();
     notifyListeners();
@@ -626,6 +670,8 @@ class AppSession extends ChangeNotifier {
   Future<void> logout() async {
     await flushPendingWrites();
     await auth.logout();
+    await SubscriptionService.instance.reset();
+    _subscribePromptDismissed = false;
     scoutingReport.reset();
     currentUser = null;
     pitchers = [];

@@ -64,6 +64,17 @@ class AuthService {
     );
   }
 
+  /// Re-reads the server-computed entitlement (plan, status, paid flag).
+  /// Null if the function is unavailable or there is no session.
+  Future<Map<String, dynamic>?> fetchEntitlement() async {
+    if (sb.auth.currentSession == null) return null;
+    try {
+      final r = await sb.rpc('get_my_entitlement');
+      if (r is Map) return Map<String, dynamic>.from(r);
+    } catch (_) {}
+    return null;
+  }
+
   /// Call once at startup: if a Supabase session was persisted from a
   /// previous visit (same browser/device), rebuilds the [AppUser] from
   /// it so the person doesn't have to log in again. Returns null if
@@ -158,6 +169,7 @@ class AuthService {
     required String planId,
     required int pitcherLimit,
     required String termsVersion,
+    String billingInterval = 'monthly', // remembered so checkout can preselect it; grants nothing
   }) async {
     if (!isValidEmail(email)) {
       return AuthResult(success: false, message: 'Enter a valid email address.');
@@ -190,6 +202,7 @@ class AuthService {
           // a username: use the first pitcher's.
           'username': pitchers.first.username.trim(),
           'plan_id': planId,
+          'billing_interval': billingInterval == 'yearly' ? 'yearly' : 'monthly',
           'terms_version': termsVersion,
           'pitchers': pitchers.map((d) => d.toJson()).toList(),
         },
